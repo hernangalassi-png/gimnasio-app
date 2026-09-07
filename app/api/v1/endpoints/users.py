@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
+import numpy as np
 from app.core.database import get_db
 from app.models.user import User as UserModel
-from app.schemas.user import User, UserCreate, UserUpdate
+from app.schemas.user import User, UserCreate, UserUpdate, UserIdentify, UserQuickRegister, UserIdentifyResponse
 
 router = APIRouter()
 
@@ -56,3 +57,52 @@ def delete_user(user_id: UUID, db: Session = Depends(get_db)):
     db.delete(db_user)
     db.commit()
     return {"message": "User deleted successfully"}
+
+
+@router.post("/identify", response_model=UserIdentifyResponse)
+def identify_user(user_data: UserIdentify, db: Session = Depends(get_db)):
+    """Identifica un usuario mediante su embedding facial usando cosine similarity"""
+    print(f"📥 Payload recibido: face_embedding length={len(user_data.face_embedding)}")
+    print(f"📥 Primeros 5 valores: {user_data.face_embedding[:5] if user_data.face_embedding else 'empty'}")
+
+    users = db.query(UserModel).filter(UserModel.face_embedding.isnot(None)).all()
+    
+    if not users:
+        return UserIdentifyResponse(identified=False, user=None)
+    
+    target_embedding = np.array(user_data.face_embedding)
+    best_match = None
+    best_similarity = 0.0
+    threshold = 0.6  # Umbral de similitud para considerar una coincidencia
+    
+    for user in users:
+        if user.face_embedding:
+            user_embedding = np.array(user.face_embedding)
+            # Cosine similarity
+            similarity = np.dot(target_embedding, user_embedding) / (
+                np.linalg.norm(target_embedding) * np.linalg.norm(user_embedding)
+            )
+            
+            if similarity > best_similarity and similarity > threshold:
+                best_similarity = similarity
+                best_match = user
+    
+    if best_match:
+        return UserIdentifyResponse(identified=True, user=best_match)
+    
+    return UserIdentifyResponse(identified=False, user=None)
+
+
+@router.post("/quick-register", response_model=User)
+def quick_register(user_data: UserQuickRegister, db: Session = Depends(get_db)):
+    """Registro rápido de un nuevo usuario con embedding facial"""
+    db_user = UserModel(
+        name=user_data.name,
+        face_embedding=user_data.face_embedding,
+        primary_goal=user_data.primary_goal,
+        target_rpe=user_data.target_rpe
+    )
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user

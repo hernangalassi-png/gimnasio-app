@@ -20,6 +20,8 @@ app.add_middleware(
         "https://gym.arenerasvig.com",
         "http://gym.arenerasvig.com",
         "http://localhost:5173",
+        "https://gymvirtual.site",
+        "http://gymvirtual.site",
     ],
     allow_credentials=True,
     allow_methods=["*"],

@@ -31,3 +31,19 @@ class User(UserBase):
 
     class Config:
         from_attributes = True
+
+
+class UserIdentify(BaseModel):
+    face_embedding: List[float] = Field(..., description="Vector de características faciales para identificar")
+
+
+class UserQuickRegister(BaseModel):
+    name: str = Field(..., description="Nombre del usuario")
+    face_embedding: List[float] = Field(..., description="Vector de características faciales")
+    primary_goal: Optional[PrimaryGoal] = Field(None, description="Objetivo principal de entrenamiento")
+    target_rpe: float = Field(7.0, description="RPE objetivo (1-10)")
+
+
+class UserIdentifyResponse(BaseModel):
+    identified: bool = Field(..., description="Si se identificó el usuario")
+    user: Optional[User] = Field(None, description="Datos del usuario si fue identificado")
