@@ -498,7 +498,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
   }, [onFaceDetectionResults]);
 
   return (
-    <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden">
+    <div className="fixed inset-0 w-screen bg-black overflow-hidden" style={{ height: '100dvh' }}>
       {/* Cámara a pantalla completa */}
       <video
         ref={videoRef}

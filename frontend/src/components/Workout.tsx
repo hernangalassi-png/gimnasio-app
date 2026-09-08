@@ -225,7 +225,7 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
   const exerciseName = exercise === 'squat' ? 'Sentadillas' : 'Flexiones';
 
   return (
-    <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden">
+    <div className="fixed inset-0 w-screen bg-black overflow-hidden" style={{ height: '100dvh' }}>
       {/* Cámara a pantalla completa */}
       <video
         ref={videoRef}
