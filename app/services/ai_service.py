@@ -105,19 +105,69 @@ Responde ÚNICAMENTE con un JSON válido (sin markdown, sin texto extra) con est
         normalized = goal.strip().lower()
         return VALID_GOALS.get(normalized, normalized if normalized in VALID_GOALS.values() else None)
 
-    def _fallback_response(self, step: str) -> ParseSpeechResponse:
-        """Respuesta elegante cuando la IA falla o no está disponible."""
+    def _extract_name_local(self, transcript: str) -> Optional[str]:
+        """Extracción local de nombre sin IA (fallback)."""
+        cleaned = re.sub(
+            r"(me llamo|mi nombre es|soy|llámame|llamame|dime|es)",
+            "",
+            transcript.lower(),
+        ).strip()
+        # Quitar puntuación y quedarse con la primera palabra válida
+        cleaned = re.sub(r"[^\wáéíóúñü\s]", "", cleaned)
+        words = [w for w in cleaned.split() if len(w) >= 2]
+        if not words:
+            return None
+        return " ".join(words[:2]).title()
+
+    def _extract_goal_local(self, transcript: str) -> Optional[str]:
+        """Mapeo local de objetivo sin IA (fallback)."""
+        text = transcript.lower()
+        for keyword, goal in VALID_GOALS.items():
+            if keyword in text:
+                return goal
+        return None
+
+    def _local_fallback(
+        self, step: str, transcript: str, context: Optional[Dict[str, Any]] = None
+    ) -> ParseSpeechResponse:
+        """
+        Fallback inteligente: procesa el transcript con reglas locales
+        cuando la IA no está disponible o falla.
+        """
         if step == "asking_name":
-            message = "No pude entender tu nombre. ¿Podrías repetirlo, por favor?"
-        else:
-            message = (
-                "No pude entender tu objetivo. ¿Podrías repetirlo? "
-                "Puedes decir: fuerza, hipertrofia, resistencia o salud general."
+            name = self._extract_name_local(transcript)
+            if name:
+                return ParseSpeechResponse(
+                    nextStep="asking_goal",
+                    resolvedData=ResolvedData(name=name),
+                    aiMessage=(
+                        f"Mucho gusto {name}. ¿Cuál es tu objetivo de entrenamiento? "
+                        "Puedes decir: fuerza, hipertrofia, resistencia o salud general."
+                    ),
+                )
+            return ParseSpeechResponse(
+                nextStep="asking_name",
+                resolvedData=ResolvedData(),
+                aiMessage="No pude entender tu nombre. ¿Podrías repetirlo, por favor?",
+            )
+
+        # asking_goal
+        goal = self._extract_goal_local(transcript)
+        name = (context or {}).get("name", "")
+        if goal:
+            greeting = f"¡Perfecto{', ' + name if name else ''}!" if name else "¡Perfecto!"
+            return ParseSpeechResponse(
+                nextStep="completed",
+                resolvedData=ResolvedData(name=name or None, goal=goal),
+                aiMessage=f"{greeting} Tu registro fue exitoso. ¡Bienvenido al gimnasio!",
             )
         return ParseSpeechResponse(
-            nextStep=step,  # type: ignore[arg-type]
-            resolvedData=ResolvedData(),
-            aiMessage=message,
+            nextStep="asking_goal",
+            resolvedData=ResolvedData(name=name or None),
+            aiMessage=(
+                "No pude entender tu objetivo. ¿Podrías repetirlo? "
+                "Puedes decir: fuerza, hipertrofia, resistencia o salud general."
+            ),
         )
 
     def parse_speech(
@@ -125,36 +175,40 @@ Responde ÚNICAMENTE con un JSON válido (sin markdown, sin texto extra) con est
     ) -> ParseSpeechResponse:
         """
         Analiza el transcript del usuario según el paso del flujo de registro.
-        Nunca lanza excepción: ante cualquier fallo devuelve una respuesta de reintento.
+        Nunca lanza excepción: ante cualquier fallo usa el fallback local con reglas.
         """
         if not self.available:
-            print("⚠️ GEMINI_API_KEY no configurada - usando fallback")
-            return self._fallback_response(step)
+            print("⚠️ Gemini no disponible (sin API key o paquete faltante) - usando fallback local")
+            return self._local_fallback(step, transcript, context)
 
         try:
             prompt = self._build_prompt(step, transcript, context)
             result = self._model.generate_content(prompt)
             raw_text = result.text if result and result.text else ""
+            print(f"🤖 Respuesta cruda de Gemini: {raw_text[:300]}")
 
             parsed = self._extract_json(raw_text)
             if not parsed:
-                print(f"⚠️ Respuesta de IA no parseable: {raw_text[:200]}")
-                return self._fallback_response(step)
+                print(f"⚠️ Respuesta de IA no parseable - usando fallback local")
+                return self._local_fallback(step, transcript, context)
 
             next_step = parsed.get("nextStep", step)
             resolved = parsed.get("resolvedData") or {}
-            ai_message = parsed.get("aiMessage") or self._fallback_response(step).aiMessage
+            ai_message = parsed.get("aiMessage") or ""
 
             # Normalizar goal a categoría estándar
             goal = self._normalize_goal(resolved.get("goal"))
 
             # Validar coherencia: si estamos en asking_goal y no hay goal, no avanzar
             if step == "asking_goal" and next_step == "completed" and not goal:
-                return self._fallback_response(step)
+                return self._local_fallback(step, transcript, context)
 
             # Si estamos en asking_name y no hay nombre, no avanzar
             if step == "asking_name" and next_step == "asking_goal" and not resolved.get("name"):
-                return self._fallback_response(step)
+                return self._local_fallback(step, transcript, context)
+
+            if not ai_message:
+                return self._local_fallback(step, transcript, context)
 
             return ParseSpeechResponse(
                 nextStep=next_step,
@@ -163,8 +217,8 @@ Responde ÚNICAMENTE con un JSON válido (sin markdown, sin texto extra) con est
             )
 
         except Exception as e:
-            print(f"❌ Error en AIService.parse_speech: {e}")
-            return self._fallback_response(step)
+            print(f"❌ Error en AIService.parse_speech: {type(e).__name__}: {e}")
+            return self._local_fallback(step, transcript, context)
 
 
 # Singleton
