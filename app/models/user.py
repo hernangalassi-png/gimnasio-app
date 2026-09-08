@@ -11,6 +11,7 @@ class PrimaryGoal(str, enum.Enum):
     DESCENSO_PESO = "descenso_peso"
     FUERZA = "fuerza"
     MOVILIDAD = "movilidad"
+    RESISTENCIA = "resistencia"
     SALUD_GENERAL = "salud_general"
 
 
