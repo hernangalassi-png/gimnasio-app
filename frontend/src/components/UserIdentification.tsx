@@ -40,8 +40,14 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
   const [avatarState, setAvatarState] = useState<AvatarState>('idle');
   const [message, setMessage] = useState<string>('Cargando sistema...');
   const [showButtons, setShowButtons] = useState(false);
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [faceStableCount, setFaceStableCount] = useState(0);
+
+  // Refs espejo para evitar closures stale en callbacks de voz/MediaPipe
+  const showButtonsRef = useRef(false);
+  const currentUserRef = useRef<User | null>(null);
+
+  const updateShowButtons = (v: boolean) => { setShowButtons(v); showButtonsRef.current = v; };
+  const updateCurrentUser = (u: User | null) => { currentUserRef.current = u; };
   
   // Referencias seguras para la IA y los datos temporales
   const lastEmbeddingRef = useRef<number[] | null>(null);
@@ -200,8 +206,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
       console.log("🔍 [Identificación Respuesta]:", response.data);
 
       if (response.data.identified && response.data.user) {
-        setCurrentUser(response.data.user);
-        setShowButtons(true);
+        updateCurrentUser(response.data.user);
+        updateShowButtons(true);
         speak(`Hola ${response.data.user.name}. ¿Deseas iniciar tu rutina?`);
         setMessage(`Hola ${response.data.user.name}`);
       } else {
@@ -253,16 +259,19 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
 
     // Si estamos en idle, manejamos el flujo normal de rutina de usuario ya registrado
     if (currentStep === 'idle') {
-      const isAffirmative = /s[ií]|yes|okay|ok|dale|claro/i.test(transcript);
-      const isNegative = /no|nunca|jamás/i.test(transcript);
+      const isAffirmative = /\b(s[ií]|yes|okay|ok|dale|claro|vamos|empezar|iniciar|comenzar)\b/i.test(transcript);
+      const isNegative = /\b(no|nunca|jamás|todavía no|todavia no|espera)\b/i.test(transcript);
 
-      if (isAffirmative && showButtons) {
+      if (isAffirmative && showButtonsRef.current) {
         handleYes();
-        setTimeout(() => handleStartWorkout(), 1000);
-      } else if (isNegative && showButtons) {
+        setTimeout(() => handleStartWorkout(), 1500);
+      } else if (isNegative && showButtonsRef.current) {
         handleNo();
+      } else if (!showButtonsRef.current) {
+        // No hay usuario identificado esperando confirmación: ignorar ruido
+        console.log("🤖 [IA Voice Parse]: Sin confirmación pendiente, ignorando.", transcript);
       } else {
-        speak('No entendí. Por favor repite.', () => startListening());
+        speak('No entendí. ¿Deseas iniciar tu rutina? Responde sí o no.', () => startListening());
       }
       return;
     }
@@ -329,8 +338,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
       });
       
       console.log("🚀 [executeQuickRegister Éxito]:", response.data);
-      setCurrentUser(response.data);
-      setShowButtons(true);
+      updateCurrentUser(response.data);
+      updateShowButtons(true);
       setMessage(`Bienvenido ${name}`);
       
       setTimeout(() => {
@@ -345,8 +354,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
 
   const handleYes = () => {
     stopListening();
-    if (currentUser) {
-      speak(`Excelente ${currentUser.name}. Iniciando rutina.`);
+    const user = currentUserRef.current;
+    if (user) {
+      speak(`Excelente ${user.name}. Iniciando tu rutina.`);
     }
   };
 
@@ -354,8 +364,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
     stopListening();
     speak('Entendido. Esperando a que te identifiques.');
     setMessage('Colócate frente a la cámara');
-    setCurrentUser(null);
-    setShowButtons(false);
+    updateCurrentUser(null);
+    updateShowButtons(false);
     updateRegistrationStep('idle');
     isDetectingRef.current = false;
     setFaceStableCount(0);
@@ -364,8 +374,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
 
   const handleStartWorkout = () => {
     stopListening();
-    if (currentUser) {
-      onUserIdentified(currentUser);
+    const user = currentUserRef.current;
+    if (user) {
+      onUserIdentified(user);
     }
   };
 
@@ -434,62 +445,75 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
   }, [onFaceDetectionResults]);
 
   return (
-    <div className="fixed inset-0 w-screen h-screen z-50 flex flex-col bg-black overflow-hidden">
-      {/* 1. SECCIÓN SUPERIOR: La cámara ocupando la mitad o un espacio destacado */}
-      <div className="relative w-full h-[55%] bg-black overflow-hidden">
-        <video 
-          ref={videoRef} 
-          autoPlay 
-          playsInline 
-          muted 
-          className="absolute inset-0 w-full h-full object-cover transform -scale-x-100"
-        />
-        <div className="absolute inset-0 bg-black/10 pointer-events-none" />
+    <div className="fixed inset-0 w-screen h-screen bg-black overflow-hidden">
+      {/* Cámara a pantalla completa */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="absolute inset-0 w-full h-full object-cover transform -scale-x-100"
+      />
+      <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/60 pointer-events-none" />
+
+      {/* Overlay superior: estado de detección */}
+      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20">
+        <div className="bg-black/60 backdrop-blur-md border border-white/10 px-5 py-2 rounded-full shadow-xl">
+          <p className="text-xs text-gray-200 font-medium">
+            {faceStableCount > 0
+              ? `Detectando rostro... ${Math.min(faceStableCount, 60)}/60`
+              : 'Esperando detección facial...'}
+          </p>
+        </div>
       </div>
 
-      {/* 2. SECCIÓN INFERIOR: El asistente, mensajes y botones ordenados abajo */}
-      <div className="w-full h-[45%] bg-gray-950 flex flex-col justify-between p-5 z-20 shadow-2xl border-t border-gray-800">
-        <div className="flex flex-col items-center justify-center space-y-2 w-full max-w-sm mx-auto">
-          <div className="bg-gray-900/90 border border-gray-700/60 p-3 rounded-2xl shadow-lg flex flex-col items-center space-y-1 w-full">
-            <InstructorAvatar state={avatarState} message={message} />
-            <p className="text-xs text-gray-300 bg-black/40 py-0.5 px-3 rounded-full">
-              {faceStableCount > 0 
-                ? `Detectando rostro... ${Math.min(faceStableCount, 60)}/60` 
-                : 'Esperando detección facial...'}
-            </p>
-          </div>
+      {/* Overlay inferior: orbe + mensaje + acciones */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center space-y-4 w-full max-w-md px-6">
+        {/* Orbe del asistente */}
+        <div className={`w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 ${
+          avatarState === 'speaking'
+            ? 'bg-blue-500/80 shadow-[0_0_50px_rgba(59,130,246,0.8)] scale-110'
+            : avatarState === 'listening'
+              ? 'bg-green-500/70 shadow-[0_0_40px_rgba(34,197,94,0.7)] animate-pulse'
+              : 'bg-blue-600/50 shadow-[0_0_25px_rgba(59,130,246,0.4)]'
+        }`}>
+          <InstructorAvatar state={avatarState} message="" />
         </div>
 
-        <div className="flex flex-col items-center space-y-2 w-full max-w-sm mx-auto pb-2">
-          {faceStableCount === 0 && registrationStep === 'idle' && (
+        {/* Mensaje del asistente */}
+        <div className="bg-black/60 backdrop-blur-md border border-white/10 px-5 py-3 rounded-2xl shadow-xl w-full text-center">
+          <p className="text-sm font-medium text-gray-100">{message}</p>
+        </div>
+
+        {/* Acciones */}
+        {faceStableCount === 0 && registrationStep === 'idle' && !showButtons && (
+          <button
+            onClick={() => {
+              speak('No te alcanzo a ver bien, acércate un poco a la cámara');
+              setMessage('No te alcanzo a ver bien, acércate un poco a la cámara');
+            }}
+            className="bg-yellow-600/90 hover:bg-yellow-700 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg transition"
+          >
+            No me veo bien
+          </button>
+        )}
+
+        {showButtons && registrationStep === 'idle' && (
+          <div className="flex space-x-3 w-full">
             <button
-              onClick={() => {
-                speak('No te alcanzo a ver bien, acércate un poco a la cámara');
-                setMessage('No te alcanzo a ver bien, acércate un poco a la cámara');
-              }}
-              className="w-full bg-yellow-600/90 hover:bg-yellow-700 text-white py-2.5 rounded-xl font-bold text-sm shadow-md transition"
+              onClick={() => { handleYes(); setTimeout(() => handleStartWorkout(), 1500); }}
+              className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
             >
-              No me veo bien
+              Sí, iniciar rutina
             </button>
-          )}
-
-          {showButtons && registrationStep === 'idle' && (
-            <div className="flex space-x-3 w-full">
-              <button
-                onClick={handleYes}
-                className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-2.5 rounded-xl font-bold text-sm shadow-md transition"
-              >
-                Sí
-              </button>
-              <button
-                onClick={handleNo}
-                className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-2.5 rounded-xl font-bold text-sm shadow-md transition"
-              >
-                No
-              </button>
-            </div>
-          )}
-        </div>
+            <button
+              onClick={handleNo}
+              className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+            >
+              No
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
