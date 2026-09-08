@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { Mic, MicOff } from 'lucide-react';
 import { InstructorAvatar, type AvatarState } from './InstructorAvatar';
 import { api } from '../services/api';
 
@@ -45,6 +46,11 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
   // Refs espejo para evitar closures stale en callbacks de voz/MediaPipe
   const showButtonsRef = useRef(false);
   const currentUserRef = useRef<User | null>(null);
+
+  // Control del bucle de escucha automática
+  const shouldListenRef = useRef(false);
+  const [isListening, setIsListening] = useState(false);
+  const [micBlocked, setMicBlocked] = useState(false);
 
   const updateShowButtons = (v: boolean) => { setShowButtons(v); showButtonsRef.current = v; };
   const updateCurrentUser = (u: User | null) => { currentUserRef.current = u; };
@@ -94,11 +100,14 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
     if (isListeningRef.current) {
       console.log("🎤 [Microfóno]: Deteniendo escucha.");
     }
+    shouldListenRef.current = false;
     isListeningRef.current = false;
+    setIsListening(false);
     if (recognitionRef.current) {
       try {
         recognitionRef.current.onresult = null;
         recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
         recognitionRef.current.stop();
       } catch (e) {}
       recognitionRef.current = null;
@@ -114,10 +123,22 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       console.warn("🎤 [Microfóno]: SpeechRecognition no soportado en este navegador.");
+      setMicBlocked(true);
       return;
     }
 
-    stopListening();
+    // Limpiar instancia previa sin apagar la intención de escuchar
+    shouldListenRef.current = true;
+    isListeningRef.current = false;
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.stop();
+      } catch (e) {}
+      recognitionRef.current = null;
+    }
 
     const recog = new SpeechRecognition();
     recog.lang = 'es-ES';
@@ -137,23 +158,54 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
       console.error("🎤 [Microfóno Error]:", err);
       setAvatarState('idle');
       isListeningRef.current = false;
+      setIsListening(false);
+
+      const errorType = err?.error || '';
+      if (errorType === 'not-allowed' || errorType === 'service-not-allowed') {
+        // El navegador bloqueó el micrófono: requiere gesto manual del usuario
+        console.warn("🎤 [Microfóno]: Permiso bloqueado. Se requiere botón manual.");
+        shouldListenRef.current = false;
+        setMicBlocked(true);
+      } else if (errorType === 'no-speech' || errorType === 'aborted') {
+        // Silencio o abort: onend se encargará de reconectar
+      }
     };
 
     recog.onend = () => {
       console.log("🎤 [Microfóno]: Evento onend disparado.");
       setAvatarState('idle');
       isListeningRef.current = false;
+      setIsListening(false);
+
+      // Bucle de reconexión automática: si el flujo espera escucha y no estamos hablando, reiniciar
+      if (shouldListenRef.current && !isSpeakingRef.current) {
+        console.log("🎤 [Microfóno]: Reconectando escucha en 600ms...");
+        setTimeout(() => {
+          if (shouldListenRef.current && !isSpeakingRef.current && !isListeningRef.current) {
+            startListening();
+          }
+        }, 600);
+      }
     };
 
     recognitionRef.current = recog;
     try {
       recog.start();
       isListeningRef.current = true;
+      setIsListening(true);
+      setMicBlocked(false);
       setAvatarState('listening');
       console.log("🎤 [Microfóno]: Escuchando activamente...");
     } catch (err) {
       console.error("🎤 [Microfóno Start Error]:", err);
       isListeningRef.current = false;
+      setIsListening(false);
+      // Reintento con retardo por si el navegador rechazó el start inmediato
+      setTimeout(() => {
+        if (shouldListenRef.current && !isSpeakingRef.current && !isListeningRef.current) {
+          startListening();
+        }
+      }, 800);
     }
   };
 
@@ -516,6 +568,31 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
           </div>
         )}
       </div>
+
+      {/* Botón flotante de micrófono: indicador de estado + escucha manual de respaldo */}
+      <button
+        onClick={() => {
+          if (isListening) {
+            stopListening();
+          } else {
+            startListening();
+          }
+        }}
+        title={micBlocked ? 'Micrófono bloqueado: toca para reintentar' : isListening ? 'Escuchando... toca para detener' : 'Toca para hablar'}
+        className={`fixed bottom-6 right-6 z-30 w-14 h-14 rounded-full flex items-center justify-center shadow-2xl transition-all duration-300 ${
+          micBlocked
+            ? 'bg-red-600/90 hover:bg-red-700 animate-pulse'
+            : isListening
+              ? 'bg-green-500/90 shadow-[0_0_25px_rgba(34,197,94,0.7)] animate-pulse'
+              : 'bg-gray-700/80 backdrop-blur-md hover:bg-gray-600'
+        }`}
+      >
+        {micBlocked ? (
+          <MicOff className="w-6 h-6 text-white" />
+        ) : (
+          <Mic className="w-6 h-6 text-white" />
+        )}
+      </button>
     </div>
   );
 };
