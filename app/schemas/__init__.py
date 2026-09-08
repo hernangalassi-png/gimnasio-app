@@ -14,6 +14,11 @@ from app.schemas.workout_log import (
     WorkoutLogUpdate,
     LogSetRequest,
 )
+from app.schemas.ai import (
+    ParseSpeechRequest,
+    ParseSpeechResponse,
+    ResolvedData,
+)
 
 __all__ = [
     "User",
@@ -34,4 +39,7 @@ __all__ = [
     "WorkoutLogCreate",
     "WorkoutLogUpdate",
     "LogSetRequest",
+    "ParseSpeechRequest",
+    "ParseSpeechResponse",
+    "ResolvedData",
 ]
