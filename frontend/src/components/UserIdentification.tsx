@@ -259,8 +259,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
 
     // Si estamos en idle, manejamos el flujo normal de rutina de usuario ya registrado
     if (currentStep === 'idle') {
-      const isAffirmative = /\b(s[ií]|yes|okay|ok|dale|claro|vamos|empezar|iniciar|comenzar)\b/i.test(transcript);
-      const isNegative = /\b(no|nunca|jamás|todavía no|todavia no|espera)\b/i.test(transcript);
+      // Nota: \b no funciona tras caracteres acentuados en JS, usamos lookarounds con \s/inicio
+      const isAffirmative = /(^|\s)(s[ií]|yes|okay|ok|dale|claro|vamos|empezar?|iniciar?|comenzar?|rutina)/i.test(transcript);
+      const isNegative = /(^|\s)(no|nunca|jamás|todavía no|todavia no|espera)/i.test(transcript);
 
       if (isAffirmative && showButtonsRef.current) {
         handleYes();

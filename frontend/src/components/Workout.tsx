@@ -71,6 +71,7 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
   const [exercise, setExerciseState] = useState<string>('squat');
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [showExample, setShowExample] = useState(false);
+  const introDoneRef = useRef(false);
 
   const setExercise = (ex: string) => { setExerciseState(ex); exerciseRef.current = ex; };
 
@@ -148,7 +149,9 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
 
     const greeting = user?.name ? `Hola ${user.name}. ` : '';
     const timer = setTimeout(() => {
-      speak(`${greeting}${routine.instructions}`);
+      speak(`${greeting}${routine.instructions} Si necesitas ver cómo se hace, decí: ejemplo.`, () => {
+        introDoneRef.current = true;
+      });
     }, 500);
 
     return () => clearTimeout(timer);
@@ -196,8 +199,8 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
               setStage(res.stage);
               setFeedback(res.feedback);
 
-              // Hablar solo cuando cambia el feedback importante
-              if (res.feedback && res.feedback !== lastSpokenFeedbackRef.current) {
+              // Hablar solo cuando cambia el feedback importante y la intro ya terminó
+              if (introDoneRef.current && res.feedback && res.feedback !== lastSpokenFeedbackRef.current) {
                 const speakable = ['¡Buena repetición!', '¡Buena flexión!', 'Aléjate', 'No se detecta persona'];
                 if (speakable.some(s => res.feedback.includes(s))) {
                   lastSpokenFeedbackRef.current = res.feedback;
