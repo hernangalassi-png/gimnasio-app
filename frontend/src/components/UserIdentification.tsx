@@ -434,21 +434,25 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
   }, [onFaceDetectionResults]);
 
   return (
-    <div className="fixed inset-0 w-screen h-screen z-50 overflow-hidden bg-black">
-      <video 
-        ref={videoRef} 
-        autoPlay 
-        playsInline 
-        muted 
-        className="absolute inset-0 w-full h-full object-cover transform -scale-x-100 z-0"
-      />
-      <div className="absolute inset-0 bg-black/30 z-10 pointer-events-none" />
+    <div className="fixed inset-0 w-screen h-screen z-50 flex flex-col bg-black overflow-hidden">
+      {/* 1. SECCIÓN SUPERIOR: La cámara ocupando la mitad o un espacio destacado */}
+      <div className="relative w-full h-[55%] bg-black overflow-hidden">
+        <video 
+          ref={videoRef} 
+          autoPlay 
+          playsInline 
+          muted 
+          className="absolute inset-0 w-full h-full object-cover transform -scale-x-100"
+        />
+        <div className="absolute inset-0 bg-black/10 pointer-events-none" />
+      </div>
 
-      <div className="absolute inset-0 z-20 flex flex-col justify-between p-6 pointer-events-none">
-        <div className="flex flex-col items-center pt-6 pointer-events-auto">
-          <div className="bg-gray-900/80 backdrop-blur-md border border-gray-700/60 p-4 rounded-2xl shadow-2xl flex flex-col items-center space-y-2 max-w-sm w-full">
+      {/* 2. SECCIÓN INFERIOR: El asistente, mensajes y botones ordenados abajo */}
+      <div className="w-full h-[45%] bg-gray-950 flex flex-col justify-between p-5 z-20 shadow-2xl border-t border-gray-800">
+        <div className="flex flex-col items-center justify-center space-y-2 w-full max-w-sm mx-auto">
+          <div className="bg-gray-900/90 border border-gray-700/60 p-3 rounded-2xl shadow-lg flex flex-col items-center space-y-1 w-full">
             <InstructorAvatar state={avatarState} message={message} />
-            <p className="text-xs text-gray-300 bg-black/50 py-1 px-3 rounded-full backdrop-blur-sm">
+            <p className="text-xs text-gray-300 bg-black/40 py-0.5 px-3 rounded-full">
               {faceStableCount > 0 
                 ? `Detectando rostro... ${Math.min(faceStableCount, 60)}/60` 
                 : 'Esperando detección facial...'}
@@ -456,14 +460,14 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
           </div>
         </div>
 
-        <div className="flex flex-col items-center pb-6 space-y-3 w-full max-w-sm mx-auto pointer-events-auto">
+        <div className="flex flex-col items-center space-y-2 w-full max-w-sm mx-auto pb-2">
           {faceStableCount === 0 && registrationStep === 'idle' && (
             <button
               onClick={() => {
                 speak('No te alcanzo a ver bien, acércate un poco a la cámara');
                 setMessage('No te alcanzo a ver bien, acércate un poco a la cámara');
               }}
-              className="w-full bg-yellow-600/90 hover:bg-yellow-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg backdrop-blur-sm transition"
+              className="w-full bg-yellow-600/90 hover:bg-yellow-700 text-white py-2.5 rounded-xl font-bold text-sm shadow-md transition"
             >
               No me veo bien
             </button>
@@ -473,13 +477,13 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
             <div className="flex space-x-3 w-full">
               <button
                 onClick={handleYes}
-                className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-base shadow-lg backdrop-blur-sm transition"
+                className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-2.5 rounded-xl font-bold text-sm shadow-md transition"
               >
                 Sí
               </button>
               <button
                 onClick={handleNo}
-                className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-base shadow-lg backdrop-blur-sm transition"
+                className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-2.5 rounded-xl font-bold text-sm shadow-md transition"
               >
                 No
               </button>

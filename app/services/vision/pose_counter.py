@@ -19,8 +19,8 @@ class PoseTrackerService:
     def __init__(self):
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
-            static_image_mode=True,
-            model_complexity=1,
+            static_image_mode=False,
+            model_complexity=0,
             smooth_landmarks=True,
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5
@@ -144,6 +144,12 @@ class PoseTrackerService:
 
             if img is None:
                 return {"reps": self.counter, "stage": self.stage.value, "angle": 0, "feedback": "Imagen inválida"}
+
+            # Redimensionar para acelerar el procesamiento en CPU
+            h, w = img.shape[:2]
+            if w > 320:
+                scale = 320.0 / w
+                img = cv2.resize(img, (320, int(h * scale)), interpolation=cv2.INTER_AREA)
 
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             results = self.pose.process(img_rgb)

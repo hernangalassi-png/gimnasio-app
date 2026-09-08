@@ -9,7 +9,7 @@ interface User {
 }
 
 function App() {
-  const [_currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [showWorkout, setShowWorkout] = useState(false);
 
   const handleUserIdentified = (user: User) => {
@@ -28,7 +28,7 @@ function App() {
         <UserIdentification onUserIdentified={handleUserIdentified} />
       ) : (
         <div>
-          <Workout />
+          <Workout user={currentUser} />
           <button
             onClick={handleBackToIdentification}
             className="fixed top-4 right-4 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg z-50"
