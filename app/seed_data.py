@@ -14,9 +14,12 @@ def seed_initial_data():
             {"id": "banda-elastica", "name": "Banda elástica", "category": EquipmentCategory.ACCESORIO, "is_available": False},
         ]
 
-        existing_equipment = {e.id for e in db.query(Equipment).all()}
         for eq in base_equipment:
-            if eq["id"] not in existing_equipment:
+            existing = db.query(Equipment).filter(Equipment.id == eq["id"]).first()
+            if existing:
+                for key, value in eq.items():
+                    setattr(existing, key, value)
+            else:
                 db.add(Equipment(**eq))
 
         # Ejercicios base
@@ -73,9 +76,12 @@ def seed_initial_data():
             },
         ]
 
-        existing_exercises = {e.id for e in db.query(Exercise).all()}
         for ex in base_exercises:
-            if ex["id"] not in existing_exercises:
+            existing = db.query(Exercise).filter(Exercise.id == ex["id"]).first()
+            if existing:
+                for key, value in ex.items():
+                    setattr(existing, key, value)
+            else:
                 db.add(Exercise(**ex))
 
         db.commit()
