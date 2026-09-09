@@ -22,10 +22,10 @@ class WorkoutSession(Base):
     __tablename__ = "workout_sessions"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    session_mode = Column(SQLEnum(SessionMode, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    session_mode = Column(SQLEnum(SessionMode), nullable=False)
     user_ids = Column(JSON, nullable=False)
     started_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
-    status = Column(SQLEnum(SessionStatus, values_callable=lambda x: [e.value for e in x]), default=SessionStatus.IN_PROGRESS)
+    status = Column(SQLEnum(SessionStatus), default=SessionStatus.IN_PROGRESS)
 
     workout_logs = relationship("WorkoutLog", back_populates="session")

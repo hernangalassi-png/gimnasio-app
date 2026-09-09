@@ -1,55 +1,11 @@
-from sqlalchemy import text
 from app.core.database import SessionLocal
 from app.models.equipment import Equipment, EquipmentCategory
 from app.models.exercise import Exercise
 
 
-def _migrate_enum_values(db):
-    """Convierte valores antiguos almacenados como nombres de enum a sus valores."""
-    db.execute(text("""
-        UPDATE equipment
-        SET category = CASE category
-            WHEN 'PESO_LIBRE' THEN 'peso_libre'
-            WHEN 'PESO_CORPORAL' THEN 'peso_corporal'
-            WHEN 'MAQUINA' THEN 'maquina'
-            WHEN 'ACCESORIO' THEN 'accesorio'
-            ELSE category
-        END
-    """))
-    db.execute(text("""
-        UPDATE users
-        SET primary_goal = CASE primary_goal
-            WHEN 'HIPERTROFIA' THEN 'hipertrofia'
-            WHEN 'DESCENSO_PESO' THEN 'descenso_peso'
-            WHEN 'FUERZA' THEN 'fuerza'
-            WHEN 'MOVILIDAD' THEN 'movilidad'
-            WHEN 'RESISTENCIA' THEN 'resistencia'
-            WHEN 'SALUD_GENERAL' THEN 'salud_general'
-            ELSE primary_goal
-        END
-    """))
-    db.execute(text("""
-        UPDATE workout_sessions
-        SET session_mode = CASE session_mode
-            WHEN 'SOLO' THEN 'solo'
-            WHEN 'DUETO' THEN 'dueto'
-            WHEN 'GRUPO' THEN 'grupo'
-            ELSE session_mode
-        END,
-            status = CASE status
-            WHEN 'IN_PROGRESS' THEN 'in_progress'
-            WHEN 'COMPLETED' THEN 'completed'
-            WHEN 'CANCELLED' THEN 'cancelled'
-            ELSE status
-        END
-    """))
-
-
 def seed_initial_data():
     db = SessionLocal()
     try:
-        _migrate_enum_values(db)
-
         # Equipamiento base
         base_equipment = [
             {"id": "peso-corporal", "name": "Peso corporal", "category": EquipmentCategory.PESO_CORPORAL, "is_available": True},

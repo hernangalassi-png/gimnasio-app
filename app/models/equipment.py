@@ -16,5 +16,5 @@ class Equipment(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
-    category = Column(SQLEnum(EquipmentCategory, values_callable=lambda x: [e.value for e in x]), nullable=False)
+    category = Column(SQLEnum(EquipmentCategory), nullable=False)
     is_available = Column(Boolean, default=True)
