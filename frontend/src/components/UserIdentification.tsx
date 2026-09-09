@@ -209,9 +209,20 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
     }
   };
 
-  const extractEmbedding = (detections: any): number[] => {
-    if (!detections || !Array.isArray(detections) || detections.length === 0) return [];
-    const detection = detections[0];
+  const getFaceArea = (detection: any): number => {
+    const bbox = detection?.boundingBox || detection?.relativeBoundingBox;
+    if (!bbox) return 0;
+    return (bbox.width || 0) * (bbox.height || 0);
+  };
+
+  const selectLargestFace = (detections: any[]): any | null => {
+    if (!detections || detections.length === 0) return null;
+    return detections.reduce((largest, current) => {
+      return getFaceArea(current) > getFaceArea(largest) ? current : largest;
+    }, detections[0]);
+  };
+
+  const extractEmbedding = (detection: any): number[] => {
     if (!detection) return [];
     const embedding: number[] = [];
     const bbox = detection.boundingBox || detection.relativeBoundingBox;
@@ -285,13 +296,20 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
     if (isDetectingRef.current) return;
 
     if (results.detections && results.detections.length > 0) {
-      const embedding = extractEmbedding(results.detections);
+      const largest = selectLargestFace(results.detections);
+      if (!largest) {
+        setFaceStableCount(0);
+        lastEmbeddingRef.current = null;
+        return;
+      }
+
+      const embedding = extractEmbedding(largest);
       if (embedding.length > 0) {
         lastEmbeddingRef.current = embedding;
         setFaceStableCount(prev => {
           const newCount = prev + 1;
-          if (newCount >= 60 && !isDetectingRef.current) {
-            console.log("🎯 [FaceDetection]: 60 fotogramas estables alcanzados. Ejecutando identificación.");
+          if (newCount >= 15 && !isDetectingRef.current) {
+            console.log("🎯 [FaceDetection]: 15 fotogramas estables alcanzados. Ejecutando identificación.");
             isDetectingRef.current = true;
             identifyUser(embedding);
           }
@@ -467,7 +485,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
 
         if (!globalFaceDetectionInstance) {
           globalFaceDetectionInstance = new window.FaceDetection({ locateFile: MEDIAPIPE_LOCATE_FILE });
-          globalFaceDetectionInstance.setOptions({ model: 'full', minDetectionConfidence: 0.6 });
+          globalFaceDetectionInstance.setOptions({ model: 'short', minDetectionConfidence: 0.5, maxNumFaces: 5 });
           await globalFaceDetectionInstance.initialize();
         }
         globalFaceDetectionInstance.onResults((results: any) => onFaceDetectionResults(results));
