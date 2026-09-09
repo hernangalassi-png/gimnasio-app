@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { processPoseFrame } from '../services/api';
+import { processPoseFrame, getEquipment, getRecommendedRoutines, type Equipment, type Exercise } from '../services/api';
 import { Camera, Volume2, HelpCircle, X, Mic } from 'lucide-react';
 
 interface User {
@@ -7,30 +7,6 @@ interface User {
   name: string;
   primary_goal?: string;
 }
-
-// Rutinas sugeridas según objetivo del usuario
-const ROUTINES: Record<string, { exercise: string; name: string; instructions: string }> = {
-  fuerza: {
-    exercise: 'squat',
-    name: 'Sentadillas',
-    instructions: 'Tu rutina de hoy es fuerza. Empezamos con sentadillas. Aléjate de la cámara hasta que se vea tu cuerpo completo. Baja hasta que tus rodillas formen noventa grados y sube con fuerza. Yo cuento tus repeticiones.'
-  },
-  hipertrofia: {
-    exercise: 'squat',
-    name: 'Sentadillas',
-    instructions: 'Tu rutina de hoy es hipertrofia. Empezamos con sentadillas controladas. Aléjate hasta verte de cuerpo completo. Baja lento, siente el músculo, y sube con control. Yo cuento tus repeticiones.'
-  },
-  resistencia: {
-    exercise: 'squat',
-    name: 'Sentadillas',
-    instructions: 'Tu rutina de hoy es resistencia. Haremos sentadillas a ritmo constante. Aléjate hasta verte de cuerpo completo. Mantén un ritmo fluido, baja y sube sin pausa. Yo cuento tus repeticiones.'
-  },
-  salud_general: {
-    exercise: 'squat',
-    name: 'Sentadillas',
-    instructions: 'Tu rutina de hoy es salud general. Empezamos suave con sentadillas. Aléjate hasta verte de cuerpo completo. Baja cómodo y sube sin forzar. Yo cuento tus repeticiones.'
-  }
-};
 
 // Guías detalladas de ejecución por ejercicio
 const EXERCISE_GUIDES: Record<string, { title: string; steps: string[]; spoken: string }> = {
@@ -73,6 +49,11 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
   const [showExample, setShowExample] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [micBlocked, setMicBlocked] = useState(false);
+  const [recommendations, setRecommendations] = useState<Exercise[]>([]);
+  const [availableEquipment, setAvailableEquipment] = useState<Equipment[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedTitle, setSelectedTitle] = useState<string>('');
   const introDoneRef = useRef(false);
   const activeRef = useRef(true);
   const streamRef = useRef<MediaStream | null>(null);
@@ -139,11 +120,11 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
       if (/ejemplo|c[oó]mo|ayuda|enseñ|explica|mostr/.test(transcript)) {
         showExerciseExample();
       } else if (/sentadilla/.test(transcript)) {
-        setExercise('squat');
-        speak('Cambiamos a sentadillas.');
+        const rec = recommendations.find(r => r.exercise_type === 'squat');
+        if (rec) { setExercise(rec.exercise_type); setSelectedTitle(rec.title); speak(`Cambiamos a ${rec.title}.`); }
       } else if (/flexion|lagartija|plancha de brazos/.test(transcript)) {
-        setExercise('pushup');
-        speak('Cambiamos a flexiones.');
+        const rec = recommendations.find(r => r.exercise_type === 'pushup');
+        if (rec) { setExercise(rec.exercise_type); setSelectedTitle(rec.title); speak(`Cambiamos a ${rec.title}.`); }
       }
     };
     try {
@@ -167,22 +148,53 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
     };
   }, [startListening]);
 
-  // Guía inicial por voz según el objetivo del usuario
+  // Cargar equipamiento, recomendaciones e iniciar guía por voz
   useEffect(() => {
-    const goal = user?.primary_goal || 'salud_general';
-    const routine = ROUTINES[goal] || ROUTINES.salud_general;
-    setExercise(routine.exercise);
+    if (!user?.id) return;
 
-    const greeting = user?.name ? `Hola ${user.name}. ` : '';
-    const timer = setTimeout(() => {
-      speak(`${greeting}${routine.instructions} Si necesitas ver cómo se hace, decí: ejemplo.`, () => {
-        introDoneRef.current = true;
-      });
-    }, 500);
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-    return () => clearTimeout(timer);
+    const load = async () => {
+      try {
+        const [equipment, routines] = await Promise.all([
+          getEquipment(),
+          getRecommendedRoutines(user.id, [])
+        ]);
+        setAvailableEquipment(equipment);
+        setRecommendations(routines);
+
+        if (routines.length > 0) {
+          const first = routines[0];
+          setExercise(first.exercise_type);
+          setSelectedTitle(first.title);
+
+          const equipmentText = first.required_equipment_ids?.length
+            ? ` Vamos a usar ${first.required_equipment_ids
+                .map((id: string) => equipment.find((e: Equipment) => e.id === id)?.name || id)
+                .join(', ')}.`
+            : ' No necesitás equipamiento.';
+
+          timer = setTimeout(() => {
+            const greeting = user.name ? `Hola ${user.name}. ` : '';
+            speak(`${greeting}Tu rutina de hoy empieza con ${first.title}.${equipmentText} ${first.description} Si necesitás ver cómo se hace, decí: ejemplo.`, () => {
+              introDoneRef.current = true;
+            });
+          }, 500);
+        } else {
+          setLoadError('No se encontraron ejercicios para tu perfil.');
+        }
+      } catch (err) {
+        console.error('Error cargando rutina:', err);
+        setLoadError('No se pudo cargar la rutina. Intentá de nuevo.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    load();
+    return () => { if (timer) clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     async function setupCamera() {
@@ -254,7 +266,8 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
     return () => clearInterval(interval);
   }, [exercise, speak]);
 
-  const exerciseName = exercise === 'squat' ? 'Sentadillas' : 'Flexiones';
+  const selectedExercise = recommendations.find(r => r.exercise_type === exercise);
+  const exerciseName = selectedTitle || selectedExercise?.title || (exercise === 'squat' ? 'Sentadillas' : 'Flexiones');
 
   return (
     <div className="overlay-container">
@@ -328,6 +341,17 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
           <Volume2 className={`w-8 h-8 text-white ${isSpeaking ? 'animate-pulse' : ''}`} />
         </div>
 
+        {/* Info de carga / error / equipo disponible */}
+        <div className="bg-black/50 backdrop-blur-sm border border-white/10 px-4 py-2 rounded-xl w-full text-center">
+          <p className="text-xs text-gray-300">
+            {isLoading
+              ? 'Cargando tu rutina...'
+              : loadError
+                ? loadError
+                : `Equipo disponible: ${availableEquipment.filter(e => e.is_available).map(e => e.name).join(', ')}`}
+          </p>
+        </div>
+
         {/* Feedback hablado */}
         <div className="bg-black/70 backdrop-blur-md border border-white/10 px-5 py-3 rounded-2xl shadow-xl w-full text-center">
           <p className="text-sm font-medium text-gray-100">{feedback}</p>
@@ -335,18 +359,15 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
 
         {/* Selector de ejercicio + botón de ejemplo + micrófono */}
         <div className="flex space-x-3 items-center">
-          <button
-            onClick={() => { setExercise('squat'); speak('Cambiamos a sentadillas. Aléjate hasta verte de cuerpo completo.'); }}
-            className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition ${exercise === 'squat' ? 'bg-blue-600 text-white' : 'bg-white/10 text-gray-300 backdrop-blur-md'}`}
-          >
-            Sentadillas
-          </button>
-          <button
-            onClick={() => { setExercise('pushup'); speak('Cambiamos a flexiones. Coloca la cámara para ver tu torso y brazos.'); }}
-            className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition ${exercise === 'pushup' ? 'bg-blue-600 text-white' : 'bg-white/10 text-gray-300 backdrop-blur-md'}`}
-          >
-            Flexiones
-          </button>
+          {recommendations.map((rec) => (
+            <button
+              key={rec.id}
+              onClick={() => { setExercise(rec.exercise_type); setSelectedTitle(rec.title); speak(`Cambiamos a ${rec.title}. ${rec.description || ''}`); }}
+              className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition ${selectedTitle === rec.title ? 'bg-blue-600 text-white' : 'bg-white/10 text-gray-300 backdrop-blur-md'}`}
+            >
+              {rec.title}
+            </button>
+          ))}
           <button
             onClick={showExerciseExample}
             title="Ver ejemplo del ejercicio"

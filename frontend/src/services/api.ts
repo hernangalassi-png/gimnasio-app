@@ -70,3 +70,36 @@ export const processPoseFrame = async (imageBlob: Blob, exerciseType: string) =>
   });
   return response.data;
 };
+
+export interface Equipment {
+  id: string;
+  name: string;
+  category: string;
+  is_available: boolean;
+}
+
+export interface Exercise {
+  id: string;
+  title: string;
+  description?: string;
+  target_muscles?: string[];
+  required_equipment_ids?: string[];
+  avatar_animation_id?: string;
+  pose_landmarks_config?: Record<string, any>;
+  exercise_type: string;
+  suitable_goals?: string[];
+  difficulty?: string;
+}
+
+export const getEquipment = async (): Promise<Equipment[]> => {
+  const response = await api.get('/equipment/');
+  return response.data;
+};
+
+export const getRecommendedRoutines = async (userId: string, availableEquipmentIds: string[]): Promise<Exercise[]> => {
+  const response = await api.post('/routines/recommend', {
+    user_id: userId,
+    available_equipment_ids: availableEquipmentIds,
+  });
+  return response.data;
+};

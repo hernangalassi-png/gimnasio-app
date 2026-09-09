@@ -3,9 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.api.v1.api import api_router
 from app.core.database import engine, Base
+from app.seed_data import seed_initial_data
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
+seed_initial_data()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

@@ -14,5 +14,6 @@ class Exercise(Base):
     required_equipment_ids = Column(JSON, nullable=True)
     avatar_animation_id = Column(String, nullable=True)
     pose_landmarks_config = Column(JSON, nullable=True)
-
-    workout_logs = relationship("WorkoutLog", back_populates="exercise")
+    exercise_type = Column(String, nullable=False, default="squat")
+    suitable_goals = Column(JSON, nullable=True)
+    difficulty = Column(String, nullable=True)
