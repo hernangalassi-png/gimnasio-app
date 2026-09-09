@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { processPoseFrame } from '../services/api';
-import { Camera, Volume2, HelpCircle, X } from 'lucide-react';
+import { Camera, Volume2, HelpCircle, X, Mic } from 'lucide-react';
 
 interface User {
   id: string;
@@ -58,7 +58,7 @@ const EXERCISE_GUIDES: Record<string, { title: string; steps: string[]; spoken: 
   }
 };
 
-export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
+export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null }> = ({ user, stream }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const isProcessingRef = useRef(false);
   const lastSpokenFeedbackRef = useRef<string>('');
@@ -71,7 +71,11 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
   const [exercise, setExerciseState] = useState<string>('squat');
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [showExample, setShowExample] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [micBlocked, setMicBlocked] = useState(false);
   const introDoneRef = useRef(false);
+  const activeRef = useRef(true);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const setExercise = (ex: string) => { setExerciseState(ex); exerciseRef.current = ex; };
 
@@ -102,44 +106,59 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
   }, [speak]);
 
   // Escucha de comandos de voz durante la rutina ("ejemplo", "cómo", "ayuda")
-  useEffect(() => {
+  const startListening = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
+    if (isSpeakingRef.current || recognitionRef.current) return;
 
-    let active = true;
-    const startRecog = () => {
-      if (!active || isSpeakingRef.current) return;
-      const recog = new SpeechRecognition();
-      recog.lang = 'es-ES';
-      recog.continuous = false;
-      recog.interimResults = false;
-      recog.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript.toLowerCase();
-        console.log('🎙️ [Workout Voz]:', transcript);
-        if (/ejemplo|c[oó]mo|ayuda|enseñ|explica|mostr/.test(transcript)) {
-          showExerciseExample();
-        } else if (/sentadilla/.test(transcript)) {
-          setExercise('squat');
-          speak('Cambiamos a sentadillas.');
-        } else if (/flexion|lagartija|plancha de brazos/.test(transcript)) {
-          setExercise('pushup');
-          speak('Cambiamos a flexiones.');
-        }
-      };
-      recog.onend = () => { if (active) setTimeout(startRecog, 800); };
-      recog.onerror = () => { if (active) setTimeout(startRecog, 1500); };
-      try { recog.start(); recognitionRef.current = recog; } catch (e) {}
+    const recog = new SpeechRecognition();
+    recog.lang = 'es-ES';
+    recog.continuous = false;
+    recog.interimResults = false;
+    recog.onstart = () => { setIsListening(true); setMicBlocked(false); };
+    recog.onend = () => { setIsListening(false); recognitionRef.current = null; if (activeRef.current) setTimeout(startListening, 600); };
+    recog.onerror = (e: any) => {
+      console.warn('[Workout micrófono error]:', e.error);
+      setIsListening(false);
+      recognitionRef.current = null;
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        setMicBlocked(true);
+      }
+      if (activeRef.current) setTimeout(startListening, 1200);
     };
+    recog.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript.toLowerCase();
+      console.log('[Workout Voz]:', transcript);
+      if (/ejemplo|c[oó]mo|ayuda|enseñ|explica|mostr/.test(transcript)) {
+        showExerciseExample();
+      } else if (/sentadilla/.test(transcript)) {
+        setExercise('squat');
+        speak('Cambiamos a sentadillas.');
+      } else if (/flexion|lagartija|plancha de brazos/.test(transcript)) {
+        setExercise('pushup');
+        speak('Cambiamos a flexiones.');
+      }
+    };
+    try {
+      recog.start();
+      recognitionRef.current = recog;
+    } catch (e: any) {
+      console.warn('[Workout start error]:', e.message);
+      setMicBlocked(true);
+    }
+  }, [showExerciseExample, speak]);
 
-    const timer = setTimeout(startRecog, 3000);
+  useEffect(() => {
+    activeRef.current = true;
+    const timer = setTimeout(startListening, 3500);
     return () => {
-      active = false;
+      activeRef.current = false;
       clearTimeout(timer);
       if (recognitionRef.current) {
         try { recognitionRef.current.onend = null; recognitionRef.current.stop(); } catch (e) {}
       }
     };
-  }, [showExerciseExample, speak]);
+  }, [startListening]);
 
   // Guía inicial por voz según el objetivo del usuario
   useEffect(() => {
@@ -160,22 +179,26 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
 
   useEffect(() => {
     async function setupCamera() {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        if (videoRef.current) {
+      if (videoRef.current) {
+        if (stream) {
           videoRef.current.srcObject = stream;
+          streamRef.current = stream;
+          try { videoRef.current.play(); } catch (e) {}
+        } else if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+          videoRef.current.srcObject = newStream;
+          streamRef.current = newStream;
+          try { videoRef.current.play(); } catch (e) {}
         }
       }
     }
     setupCamera();
 
     return () => {
-      if (videoRef.current?.srcObject) {
-        (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
-      }
       window.speechSynthesis?.cancel();
+      activeRef.current = false;
     };
-  }, []);
+  }, [stream]);
 
   // Loop de procesamiento: solo envía un frame si no hay petición en vuelo
   useEffect(() => {
@@ -237,8 +260,8 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
       <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/60 pointer-events-none" />
 
       {/* Overlay superior: contador */}
-      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20">
-        <div className="bg-black/60 backdrop-blur-md border border-white/10 px-6 py-3 rounded-2xl flex items-center space-x-4 shadow-2xl">
+      <div className="absolute top-[calc(1.5rem+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 z-30">
+        <div className="bg-black/70 backdrop-blur-md border border-white/10 px-6 py-3 rounded-2xl flex items-center space-x-4 shadow-2xl">
           <Camera className="w-6 h-6 text-green-400" />
           <div className="text-center">
             <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{exerciseName}</p>
@@ -286,22 +309,22 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
       )}
 
       {/* Overlay inferior: orbe + feedback */}
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center space-y-4 w-full max-w-md px-6">
+      <div className="absolute bottom-[calc(2rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-30 flex flex-col items-center space-y-4 w-full max-w-md px-6">
         {/* Orbe del asistente */}
-        <div className={`w-16 h-16 rounded-full flex items-center justify-center transition-all duration-300 ${
+        <div className={`w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 ${
           isSpeaking
-            ? 'bg-blue-500/80 shadow-[0_0_40px_rgba(59,130,246,0.7)] scale-110'
-            : 'bg-blue-600/50 shadow-[0_0_20px_rgba(59,130,246,0.4)]'
+            ? 'bg-blue-500 shadow-[0_0_50px_rgba(59,130,246,0.9)] scale-110'
+            : 'bg-blue-600 shadow-[0_0_30px_rgba(59,130,246,0.6)]'
         }`}>
-          <Volume2 className={`w-7 h-7 text-white ${isSpeaking ? 'animate-pulse' : ''}`} />
+          <Volume2 className={`w-8 h-8 text-white ${isSpeaking ? 'animate-pulse' : ''}`} />
         </div>
 
         {/* Feedback hablado */}
-        <div className="bg-black/60 backdrop-blur-md border border-white/10 px-5 py-3 rounded-2xl shadow-xl w-full text-center">
+        <div className="bg-black/70 backdrop-blur-md border border-white/10 px-5 py-3 rounded-2xl shadow-xl w-full text-center">
           <p className="text-sm font-medium text-gray-100">{feedback}</p>
         </div>
 
-        {/* Selector de ejercicio + botón de ejemplo */}
+        {/* Selector de ejercicio + botón de ejemplo + micrófono */}
         <div className="flex space-x-3 items-center">
           <button
             onClick={() => { setExercise('squat'); speak('Cambiamos a sentadillas. Aléjate hasta verte de cuerpo completo.'); }}
@@ -321,6 +344,19 @@ export const Workout: React.FC<{ user?: User | null }> = ({ user }) => {
             className="p-2.5 rounded-xl bg-white/10 text-gray-200 backdrop-blur-md hover:bg-white/20 shadow-lg transition"
           >
             <HelpCircle className="w-5 h-5" />
+          </button>
+          <button
+            onClick={startListening}
+            title="Activar micrófono"
+            className={`p-2.5 rounded-xl shadow-lg transition ${
+              micBlocked
+                ? 'bg-red-500/80 text-white'
+                : isListening
+                  ? 'bg-green-500/80 text-white animate-pulse'
+                  : 'bg-white/10 text-gray-200 backdrop-blur-md hover:bg-white/20'
+            }`}
+          >
+            <Mic className="w-5 h-5" />
           </button>
         </div>
       </div>

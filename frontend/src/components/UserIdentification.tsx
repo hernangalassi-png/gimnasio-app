@@ -6,7 +6,6 @@ import { api } from '../services/api';
 declare global {
   interface Window {
     FaceDetection: any;
-    Camera: any;
   }
 }
 
@@ -27,10 +26,14 @@ interface FaceDetectionResult {
   user?: User;
 }
 
-export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => void }> = ({ onUserIdentified }) => {
+export const UserIdentification: React.FC<{ onUserIdentified: (user: User, stream?: MediaStream | null) => void }> = ({ onUserIdentified }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceDetectionRef = useRef<any>(null);
-  const cameraRef = useRef<any>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const frameCountRef = useRef(0);
+  const isProcessingFrameRef = useRef(false);
+  const hasTransitionedRef = useRef(false);
   const isInitializedRef = useRef(false);
   
   const isDetectingRef = useRef(false);
@@ -54,6 +57,25 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
 
   const updateShowButtons = (v: boolean) => { setShowButtons(v); showButtonsRef.current = v; };
   const updateCurrentUser = (u: User | null) => { currentUserRef.current = u; };
+
+  const [members, setMembers] = useState<User[]>([]);
+  const [selectedMember, setSelectedMember] = useState<User | null>(null);
+  const [mode, setMode] = useState<'detecting' | 'members'>('detecting');
+  const membersRef = useRef<User[]>([]);
+  const selectedMemberRef = useRef<User | null>(null);
+
+  const selectMember = useCallback((user: User | null) => {
+    setSelectedMember(user);
+    selectedMemberRef.current = user;
+  }, []);
+
+  const addMember = useCallback((user: User) => {
+    setMembers(prev => {
+      if (prev.some(m => m.id === user.id)) return prev;
+      return [...prev, user];
+    });
+    selectMember(user);
+  }, [selectMember]);
   
   // Referencias seguras para la IA y los datos temporales
   const lastEmbeddingRef = useRef<number[] | null>(null);
@@ -270,7 +292,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
 
       if (response.data.identified && response.data.user) {
         updateCurrentUser(response.data.user);
-        updateShowButtons(true);
+        addMember(response.data.user);
+        setMode('members');
         speak(`Hola ${response.data.user.name}. ¿Deseas iniciar tu rutina?`);
         setMessage(`Hola ${response.data.user.name}`);
       } else {
@@ -290,10 +313,12 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
           setFaceStableCount(0);
       }, 3000);
     }
-  }, []);
+  }, [addMember]);
 
   const onFaceDetectionResults = useCallback((results: any) => {
     if (isDetectingRef.current) return;
+
+    console.log('👁️ [FaceDetection onResults]:', results.detections ? results.detections.length : 0, 'caras');
 
     if (results.detections && results.detections.length > 0) {
       const largest = selectLargestFace(results.detections);
@@ -333,12 +358,14 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
       const isAffirmative = /(^|\s)(s[ií]|yes|okay|ok|dale|claro|vamos|empezar?|iniciar?|comenzar?|rutina)/i.test(transcript);
       const isNegative = /(^|\s)(no|nunca|jamás|todavía no|todavia no|espera)/i.test(transcript);
 
-      if (isAffirmative && showButtonsRef.current) {
-        handleYes();
-        setTimeout(() => handleStartWorkout(), 1500);
-      } else if (isNegative && showButtonsRef.current) {
-        handleNo();
-      } else if (!showButtonsRef.current) {
+      const hasMember = selectedMemberRef.current || membersRef.current.length > 0;
+      if (isAffirmative && hasMember) {
+        const user = selectedMemberRef.current || membersRef.current[membersRef.current.length - 1];
+        speak(`Perfecto${user?.name ? ' ' + user.name : ''}. Iniciando tu rutina.`);
+        setTimeout(() => handleStartWorkoutForSelected(), 1200);
+      } else if (isNegative && hasMember) {
+        handleAddAnother();
+      } else if (!hasMember) {
         // No hay usuario identificado esperando confirmación: ignorar ruido
         console.log("🤖 [IA Voice Parse]: Sin confirmación pendiente, ignorando.", transcript);
       } else {
@@ -410,12 +437,10 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
       
       console.log("🚀 [executeQuickRegister Éxito]:", response.data);
       updateCurrentUser(response.data);
-      updateShowButtons(true);
+      addMember(response.data);
       setMessage(`Bienvenido ${name}`);
-      
-      setTimeout(() => {
-        onUserIdentified(response.data);
-      }, 2000);
+      speak(`Bienvenido ${name}. ¿Quién más va a entrenar? Toca Iniciar rutina o Agregar otro.`, () => {});
+      setMode('members');
     } catch (error) {
       console.error('❌ [Error registro backend]:', error);
       speak('Hubo un error al registrarte. Inténtalo nuevamente.');
@@ -423,39 +448,69 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
     }
   };
 
-  const handleYes = () => {
+  const handleStartWorkoutForSelected = useCallback(() => {
     stopListening();
-    const user = currentUserRef.current;
+    const user = selectedMemberRef.current || currentUserRef.current;
     if (user) {
-      speak(`Excelente ${user.name}. Iniciando tu rutina.`);
+      hasTransitionedRef.current = true;
+      onUserIdentified(user, streamRef.current);
     }
-  };
+  }, [onUserIdentified]);
 
-  const handleNo = () => {
+  const handleAddAnother = () => {
     stopListening();
-    speak('Entendido. Esperando a que te identifiques.');
-    setMessage('Colócate frente a la cámara');
     updateCurrentUser(null);
     updateShowButtons(false);
     updateRegistrationStep('idle');
     isDetectingRef.current = false;
     setFaceStableCount(0);
     pendingNameRef.current = '';
+    lastEmbeddingRef.current = null;
+    setMode('detecting');
+    setMessage('Colócate frente a la cámara para agregar otro integrante');
+    speak('Colócate frente a la cámara para agregar otro integrante.', () => {});
   };
 
-  const handleStartWorkout = () => {
+  const handleResetAll = () => {
     stopListening();
-    const user = currentUserRef.current;
-    if (user) {
-      onUserIdentified(user);
-    }
+    updateCurrentUser(null);
+    updateShowButtons(false);
+    updateRegistrationStep('idle');
+    isDetectingRef.current = false;
+    setFaceStableCount(0);
+    pendingNameRef.current = '';
+    lastEmbeddingRef.current = null;
+    setMembers([]);
+    setSelectedMember(null);
+    membersRef.current = [];
+    selectedMemberRef.current = null;
+    setMode('detecting');
+    setMessage('Colócate frente a la cámara');
+    speak('Esperando identificación.', () => {});
   };
 
   useEffect(() => {
     return () => {
       stopListening();
-      if (cameraRef.current) cameraRef.current.stop();
-      if (faceDetectionRef.current) faceDetectionRef.current.close();
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      if (faceDetectionRef.current) {
+        try {
+          faceDetectionRef.current.close();
+        } catch (e) {}
+        faceDetectionRef.current = null;
+        globalFaceDetectionInstance = null;
+      }
+      if (hasTransitionedRef.current) {
+        console.log('🔄 [UserIdentification cleanup]: cámara ya pasó a Workout, no detener tracks.');
+      } else {
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(t => t.stop());
+          streamRef.current = null;
+        }
+      }
     };
   }, []);
 
@@ -485,27 +540,49 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
 
         if (!globalFaceDetectionInstance) {
           globalFaceDetectionInstance = new window.FaceDetection({ locateFile: MEDIAPIPE_LOCATE_FILE });
-          globalFaceDetectionInstance.setOptions({ model: 'short', minDetectionConfidence: 0.5, maxNumFaces: 5 });
+          globalFaceDetectionInstance.setOptions({ model: 'full', minDetectionConfidence: 0.5 });
           await globalFaceDetectionInstance.initialize();
         }
         globalFaceDetectionInstance.onResults((results: any) => onFaceDetectionResults(results));
         faceDetectionRef.current = globalFaceDetectionInstance;
         isInitializedRef.current = true;
 
-        const camera = new window.Camera(videoRef.current, {
-          onFrame: async () => {
-            if (faceDetectionRef.current && videoRef.current && !isDetectingRef.current) {
-              try {
-                await faceDetectionRef.current.send({ image: videoRef.current });
-              } catch (error) {}
-            }
-          },
-          width: 640,
-          height: 480
+        // Solicitamos el stream de cámara una sola vez y lo pasaremos a Workout sin recargarlo
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: 640, height: 480 },
+          audio: false
         });
-        await camera.start();
-        cameraRef.current = camera;
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          try { await videoRef.current.play(); } catch (e) {}
+        }
         setMessage('Colócate frente a la cámara');
+
+        // Bucle manual: detectamos cada 3 frames sin depender de Camera Utils
+        const loop = async () => {
+          if (hasTransitionedRef.current) return;
+          frameCountRef.current += 1;
+          if (
+            frameCountRef.current % 3 === 0 &&
+            videoRef.current &&
+            faceDetectionRef.current &&
+            !isDetectingRef.current &&
+            !isProcessingFrameRef.current &&
+            videoRef.current.readyState >= 2
+          ) {
+            isProcessingFrameRef.current = true;
+            try {
+              await faceDetectionRef.current.send({ image: videoRef.current });
+            } catch (error) {
+              console.error('❌ [FaceDetection send error]:', error);
+            } finally {
+              isProcessingFrameRef.current = false;
+            }
+          }
+          rafRef.current = requestAnimationFrame(loop);
+        };
+        rafRef.current = requestAnimationFrame(loop);
 
       } catch (error) {
         console.error('❌ [Error inicialización cámara]:', error);
@@ -557,33 +634,80 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
         </div>
 
         {/* Acciones */}
-        {faceStableCount === 0 && registrationStep === 'idle' && !showButtons && (
-          <button
-            onClick={() => {
-              speak('No te alcanzo a ver bien, acércate un poco a la cámara');
-              setMessage('No te alcanzo a ver bien, acércate un poco a la cámara');
-            }}
-            className="bg-yellow-600/90 hover:bg-yellow-700 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg transition"
-          >
-            No me veo bien
-          </button>
-        )}
-
-        {showButtons && registrationStep === 'idle' && (
-          <div className="flex space-x-3 w-full">
-            <button
-              onClick={() => { handleYes(); setTimeout(() => handleStartWorkout(), 1500); }}
-              className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
-            >
-              Sí, iniciar rutina
-            </button>
-            <button
-              onClick={handleNo}
-              className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
-            >
-              No
-            </button>
+        {mode === 'members' ? (
+          <div className="bg-black/70 backdrop-blur-md border border-white/10 px-5 py-4 rounded-2xl shadow-xl w-full space-y-4">
+            <p className="text-sm font-medium text-gray-100">Integrantes detectados:</p>
+            <div className="flex flex-wrap gap-2 justify-center">
+              {members.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => selectMember(m)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${
+                    selectedMember?.id === m.id ? 'bg-blue-600 text-white' : 'bg-white/10 text-gray-200 hover:bg-white/20'
+                  }`}
+                >
+                  {m.name}
+                </button>
+              ))}
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => handleStartWorkoutForSelected()}
+                className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+              >
+                Iniciar rutina
+              </button>
+              <button
+                onClick={handleAddAnother}
+                className="flex-1 bg-blue-600/90 hover:bg-blue-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+              >
+                Agregar otro
+              </button>
+              <button
+                onClick={handleResetAll}
+                className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+              >
+                Reiniciar
+              </button>
+            </div>
           </div>
+        ) : (
+          <>
+            {faceStableCount === 0 && registrationStep === 'idle' && !showButtons && (
+              <button
+                onClick={() => {
+                  speak('No te alcanzo a ver bien, acércate un poco a la cámara');
+                  setMessage('No te alcanzo a ver bien, acércate un poco a la cámara');
+                }}
+                className="bg-yellow-600/90 hover:bg-yellow-700 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg transition"
+              >
+                No me veo bien
+              </button>
+            )}
+
+            {showButtons && registrationStep === 'idle' && (
+              <div className="flex space-x-3 w-full">
+                <button
+                  onClick={() => { speak(`Perfecto. Iniciando tu rutina.`, () => {}); setTimeout(() => handleStartWorkoutForSelected(), 1200); }}
+                  className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+                >
+                  Sí, iniciar rutina
+                </button>
+                <button
+                  onClick={handleAddAnother}
+                  className="flex-1 bg-blue-600/90 hover:bg-blue-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+                >
+                  Agregar otro
+                </button>
+                <button
+                  onClick={handleResetAll}
+                  className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+                >
+                  Reiniciar
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 

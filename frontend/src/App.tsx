@@ -11,15 +11,21 @@ interface User {
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [showWorkout, setShowWorkout] = useState(false);
+  const [workoutStream, setWorkoutStream] = useState<MediaStream | null>(null);
 
-  const handleUserIdentified = (user: User) => {
+  const handleUserIdentified = (user: User, stream?: MediaStream | null) => {
     setCurrentUser(user);
+    setWorkoutStream(stream || null);
     setShowWorkout(true);
   };
 
   const handleBackToIdentification = () => {
     setShowWorkout(false);
     setCurrentUser(null);
+    if (workoutStream) {
+      workoutStream.getTracks().forEach(t => t.stop());
+      setWorkoutStream(null);
+    }
   };
 
   return (
@@ -28,7 +34,7 @@ function App() {
         <UserIdentification onUserIdentified={handleUserIdentified} />
       ) : (
         <div>
-          <Workout user={currentUser} />
+          <Workout user={currentUser} stream={workoutStream} />
           <button
             onClick={handleBackToIdentification}
             className="fixed top-4 right-4 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg z-50"

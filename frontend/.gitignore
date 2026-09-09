@@ -8,9 +8,13 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# dist is tracked so the compiled build can be deployed/tested directly
+# dist
 dist-ssr
 *.local
+
+# dist/ is kept to allow quick deployment of the compiled frontend
+# dist
 
 # Editor directories and files
 .vscode/*
