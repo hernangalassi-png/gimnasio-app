@@ -67,6 +67,36 @@ html, body {
   background: #000;
 }
 
+/* Contenedores y video fullscreen forzados con !important para evitar overrides */
+.overlay-container {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  height: 100dvh !important;
+  min-height: 100vh !important; /* fallback */
+  overflow: hidden !important;
+  background: #000;
+  z-index: 0;
+}
+
+.camera-fullscreen {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  object-fit: cover !important;
+  transform: scaleX(-1) !important;
+  z-index: 0 !important;
+}
+
 body {
   margin: 0;
 }

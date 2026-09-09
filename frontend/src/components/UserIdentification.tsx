@@ -498,14 +498,14 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User) => vo
   }, [onFaceDetectionResults]);
 
   return (
-    <div className="fixed inset-0 w-screen bg-black overflow-hidden" style={{ height: '100dvh' }}>
+    <div className="overlay-container">
       {/* Cámara a pantalla completa */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
-        className="absolute inset-0 w-full h-full object-cover transform -scale-x-100"
+        className="camera-fullscreen"
       />
       <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/60 pointer-events-none" />
 
