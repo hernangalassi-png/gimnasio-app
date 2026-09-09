@@ -76,6 +76,8 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
   const introDoneRef = useRef(false);
   const activeRef = useRef(true);
   const streamRef = useRef<MediaStream | null>(null);
+  const helpActiveRef = useRef(false);
+  const resumeAtRef = useRef<number | null>(null);
 
   const setExercise = (ex: string) => { setExerciseState(ex); exerciseRef.current = ex; };
 
@@ -100,7 +102,12 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
 
   // Mostrar ejemplo del ejercicio actual (voz o botón)
   const showExerciseExample = useCallback(() => {
+    if (helpActiveRef.current) return;
     const guide = EXERCISE_GUIDES[exerciseRef.current] || EXERCISE_GUIDES.squat;
+    helpActiveRef.current = true;
+    resumeAtRef.current = null;
+    lastSpokenFeedbackRef.current = '';
+    window.speechSynthesis?.cancel();
     setShowExample(true);
     speak(guide.spoken);
   }, [speak]);
@@ -109,7 +116,7 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
   const startListening = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
-    if (isSpeakingRef.current || recognitionRef.current) return;
+    if (helpActiveRef.current || isSpeakingRef.current || recognitionRef.current) return;
 
     const recog = new SpeechRecognition();
     recog.lang = 'es-ES';
@@ -205,6 +212,8 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
     const interval = setInterval(async () => {
       if (!videoRef.current || isProcessingRef.current) return;
       if (videoRef.current.readyState < 2) return;
+      if (helpActiveRef.current) return;
+      if (resumeAtRef.current && Date.now() < resumeAtRef.current) return;
 
       isProcessingRef.current = true;
 
@@ -280,7 +289,7 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6">
           <div className="bg-gray-900/95 border border-white/15 rounded-2xl shadow-2xl max-w-md w-full p-6 relative">
             <button
-              onClick={() => { setShowExample(false); window.speechSynthesis?.cancel(); }}
+              onClick={() => { setShowExample(false); helpActiveRef.current = false; resumeAtRef.current = Date.now() + 1500; lastSpokenFeedbackRef.current = ''; window.speechSynthesis?.cancel(); }}
               className="absolute top-3 right-3 text-gray-400 hover:text-white"
             >
               <X className="w-5 h-5" />
@@ -299,7 +308,7 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
               ))}
             </ol>
             <button
-              onClick={() => { setShowExample(false); window.speechSynthesis?.cancel(); speak('Perfecto. Comienza cuando estés listo.'); }}
+              onClick={() => { setShowExample(false); helpActiveRef.current = false; resumeAtRef.current = Date.now() + 1500; lastSpokenFeedbackRef.current = ''; window.speechSynthesis?.cancel(); speak('Perfecto. Comienza cuando estés listo.'); }}
               className="mt-5 w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl font-bold text-sm transition"
             >
               Entendido, ¡vamos!
