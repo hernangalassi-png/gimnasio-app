@@ -21,7 +21,7 @@ class User(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String, nullable=False)
     face_embedding = Column(JSON, nullable=True)
-    primary_goal = Column(SQLEnum(PrimaryGoal), nullable=True)
+    primary_goal = Column(SQLEnum(PrimaryGoal, values_callable=lambda x: [e.value for e in x]), nullable=True)
     physical_limitations = Column(JSON, nullable=True)
     target_rpe = Column(Float, default=7.0)
     created_at = Column(DateTime, default=datetime.utcnow)
