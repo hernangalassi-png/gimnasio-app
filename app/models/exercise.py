@@ -17,3 +17,5 @@ class Exercise(Base):
     exercise_type = Column(String, nullable=False, default="squat")
     suitable_goals = Column(JSON, nullable=True)
     difficulty = Column(String, nullable=True)
+
+    workout_logs = relationship("WorkoutLog", back_populates="exercise")
