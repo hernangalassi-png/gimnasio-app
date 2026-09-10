@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from uuid import UUID
 
 
 class ExerciseBase(BaseModel):
@@ -32,7 +31,7 @@ class ExerciseUpdate(BaseModel):
 
 
 class Exercise(ExerciseBase):
-    id: UUID
+    id: str
 
     class Config:
         from_attributes = True

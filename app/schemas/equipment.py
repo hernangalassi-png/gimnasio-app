@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Any
-from uuid import UUID
 from app.models.equipment import EquipmentCategory
 
 
@@ -42,7 +41,7 @@ class EquipmentUpdate(BaseModel):
 
 
 class Equipment(EquipmentBase):
-    id: UUID
+    id: str
 
     class Config:
         from_attributes = True
