@@ -1,8 +1,6 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from sqlalchemy import text
-import traceback
 from app.core.config import settings
 from app.api.v1.api import api_router
 from app.core.database import engine, Base, SessionLocal
@@ -31,11 +29,6 @@ app = FastAPI(
     version=settings.VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
-
-
-@app.exception_handler(Exception)
-def global_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(status_code=500, content={"detail": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))})
 
 # Set up CORS
 app.add_middleware(
