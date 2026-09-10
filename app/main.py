@@ -35,7 +35,7 @@ app = FastAPI(
 
 @app.exception_handler(Exception)
 def global_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(status_code=500, content={"detail": traceback.format_exc()})
+    return JSONResponse(status_code=500, content={"detail": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))})
 
 # Set up CORS
 app.add_middleware(
