@@ -18,10 +18,13 @@ def create_exercise(exercise: ExerciseCreate, db: Session = Depends(get_db)):
     return db_exercise
 
 
-@router.get("/", response_model=List[Exercise])
+@router.get("/")
 def get_exercises(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    exercises = db.query(ExerciseModel).offset(skip).limit(limit).all()
-    return exercises
+    try:
+        exercises = db.query(ExerciseModel).offset(skip).limit(limit).all()
+        return exercises
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{exercise_id}", response_model=Exercise)
