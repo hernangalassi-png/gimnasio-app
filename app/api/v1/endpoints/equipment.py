@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
 from app.core.database import get_db
+from app.core.logging import log
 from app.models.equipment import Equipment as EquipmentModel
 from app.schemas.equipment import Equipment, EquipmentCreate, EquipmentUpdate
 
@@ -20,7 +21,10 @@ def create_equipment(equipment: EquipmentCreate, db: Session = Depends(get_db)):
 
 @router.get("/", response_model=List[Equipment])
 def get_equipment(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    import time
+    t0 = time.perf_counter()
     equipment = db.query(EquipmentModel).offset(skip).limit(limit).all()
+    log("EQUIPMENT", "GET /equipment", {"count": len(equipment), "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)})
     return equipment
 
 

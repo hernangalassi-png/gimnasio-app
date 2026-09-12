@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Mic, MicOff } from 'lucide-react';
 import { InstructorAvatar, type AvatarState } from './InstructorAvatar';
-import { api } from '../services/api';
+import { api, log } from '../services/api';
 
 declare global {
   interface Window {
@@ -55,6 +55,10 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
   const [isListening, setIsListening] = useState(false);
   const [micBlocked, setMicBlocked] = useState(false);
 
+  // TTS bloqueado por autoplay: guardamos lo pendiente para reintentar con un gesto del usuario
+  const [voiceBlocked, setVoiceBlocked] = useState(false);
+  const pendingSpeakRef = useRef<{ text: string; callback?: () => void } | null>(null);
+
   const updateShowButtons = (v: boolean) => { setShowButtons(v); showButtonsRef.current = v; };
   const updateCurrentUser = (u: User | null) => { currentUserRef.current = u; };
 
@@ -89,7 +93,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
   };
 
   const speak = (text: string, callback?: () => void) => {
-    console.log("🗣️ [TTS Speak]:", text);
+    log('TTS', 'Speak', { text, hasCallback: !!callback });
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       isSpeakingRef.current = true;
@@ -99,20 +103,60 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
       utterance.lang = 'es-ES';
       utterance.rate = 1;
       utterance.pitch = 1;
-      
-      utterance.onstart = () => setAvatarState('speaking');
+
+      utterance.onstart = () => {
+        log('TTS', 'onstart: reproduciendo audio');
+        setAvatarState('speaking');
+      };
       utterance.onend = () => {
         setAvatarState('idle');
         isSpeakingRef.current = false;
-        console.log("🗣️ [TTS Fin]. Callback existe?", !!callback);
+        log('TTS', 'Fin de habla', { hasCallback: !!callback });
         if (callback) {
           callback();
         } else {
           startListening();
         }
       };
-      
+      utterance.onerror = (e: any) => {
+        const err = e?.error || 'unknown';
+        log('TTS', 'Error de síntesis', { error: err });
+        // 'canceled'/'interrupted' = otro speak() lo reemplazó; no continuar el flujo desde acá
+        if (err === 'canceled' || err === 'interrupted') return;
+        setAvatarState('idle');
+        isSpeakingRef.current = false;
+        if (err === 'not-allowed') {
+          // Autoplay policy: el navegador exige un gesto del usuario para reproducir audio
+          pendingSpeakRef.current = { text, callback };
+          setVoiceBlocked(true);
+          setMessage('Tocá la pantalla para activar la voz');
+          return;
+        }
+        // Otros errores: continuar el flujo sin audio para no colgar la app
+        if (callback) {
+          callback();
+        } else {
+          startListening();
+        }
+      };
+
       window.speechSynthesis.speak(utterance);
+      // Chrome puede dejar la cola pausada después de cancel()
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+      // Watchdog: si en 1.5s no arrancó ni terminó ni encoló, el navegador lo bloqueó en silencio
+      setTimeout(() => {
+        const synth = window.speechSynthesis;
+        if (isSpeakingRef.current && !synth.speaking && !synth.pending) {
+          log('TTS', 'Watchdog: utterance nunca inició (bloqueo silencioso)', { paused: synth.paused });
+          isSpeakingRef.current = false;
+          setAvatarState('idle');
+          pendingSpeakRef.current = { text, callback };
+          setVoiceBlocked(true);
+          setMessage('Tocá la pantalla para activar la voz');
+        }
+      }, 1500);
     } else {
       if (callback) callback();
     }
@@ -138,7 +182,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
 
   const startListening = () => {
     if (isSpeakingRef.current || isListeningRef.current) {
-      console.log("🎤 [Microfóno]: No se puede iniciar (hablando o ya escuchando).");
+      log('MIC', 'startListening ignorado (hablando o ya escuchando)');
       return;
     }
 
@@ -170,14 +214,14 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
     recog.onresult = (event: any) => {
       if (!isListeningRef.current) return;
       const transcript = event.results[0][0].transcript.trim();
-      console.log("🎙️ [VOZ CAPTURADA EXITOSA]:", transcript);
+      log('MIC', 'Voz capturada', { transcript });
       
       stopListening();
       handleVoiceCommand(transcript);
     };
 
     recog.onerror = (err: any) => {
-      console.error("🎤 [Microfóno Error]:", err);
+      log('MIC', 'Error de micrófono', { error: err?.error });
       setAvatarState('idle');
       isListeningRef.current = false;
       setIsListening(false);
@@ -194,7 +238,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
     };
 
     recog.onend = () => {
-      console.log("🎤 [Microfóno]: Evento onend disparado.");
+      log('MIC', 'onend disparado', { shouldListen: shouldListenRef.current, isSpeaking: isSpeakingRef.current });
       setAvatarState('idle');
       isListeningRef.current = false;
       setIsListening(false);
@@ -217,7 +261,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
       setIsListening(true);
       setMicBlocked(false);
       setAvatarState('listening');
-      console.log("🎤 [Microfóno]: Escuchando activamente...");
+      log('MIC', 'Escuchando activamente');
     } catch (err) {
       console.error("🎤 [Microfóno Start Error]:", err);
       isListeningRef.current = false;
@@ -278,7 +322,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
   };
 
   const identifyUser = useCallback(async (embedding: number[]) => {
-    console.log("🔍 [Identificación]: Enviando embedding al backend...");
+    const t0 = performance.now();
+    log('IDENTIFY', 'Enviando embedding al backend', { embeddingLen: embedding.length });
     const payload = { face_embedding: embedding };
     try {
       setMessage('Identificando rostro...');
@@ -288,7 +333,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
         timeout: 60000
       });
 
-      console.log("🔍 [Identificación Respuesta]:", response.data);
+      log('IDENTIFY', 'Respuesta recibida', { identified: response.data.identified, user: response.data.user?.name, elapsed_ms: Math.round(performance.now() - t0) });
 
       if (response.data.identified && response.data.user) {
         updateCurrentUser(response.data.user);
@@ -297,7 +342,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
         speak(`Hola ${response.data.user.name}. ¿Deseas iniciar tu rutina?`);
         setMessage(`Hola ${response.data.user.name}`);
       } else {
-        console.log("👤 [Identificación]: Usuario no reconocido. Iniciando registro por IA.");
+        log('IDENTIFY', 'Usuario no reconocido -> iniciando registro por voz');
         isDetectingRef.current = true;
         updateRegistrationStep('asking_name');
         speak('No te reconozco. ¿Cómo te llamas?', () => {
@@ -306,7 +351,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
         setMessage('Dime tu nombre...');
       }
     } catch (error: any) {
-      console.error('❌ [Error identificación]:', error);
+      log('IDENTIFY', 'Error de conexión', { message: error?.message, elapsed_ms: Math.round(performance.now() - t0) });
       setMessage('Error de conexión.');
       setTimeout(() => {
           isDetectingRef.current = false;
@@ -318,7 +363,10 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
   const onFaceDetectionResults = useCallback((results: any) => {
     if (isDetectingRef.current) return;
 
-    console.log('👁️ [FaceDetection onResults]:', results.detections ? results.detections.length : 0, 'caras');
+    const numFaces = results.detections ? results.detections.length : 0;
+    if (numFaces > 0 || faceStableCount > 0) {
+      log('FACE', 'onResults', { faces: numFaces, stableCount: faceStableCount });
+    }
 
     if (results.detections && results.detections.length > 0) {
       const largest = selectLargestFace(results.detections);
@@ -334,7 +382,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
         setFaceStableCount(prev => {
           const newCount = prev + 1;
           if (newCount >= 15 && !isDetectingRef.current) {
-            console.log("🎯 [FaceDetection]: 15 fotogramas estables alcanzados. Ejecutando identificación.");
+            log('FACE', '15 frames estables -> ejecutando identificación');
             isDetectingRef.current = true;
             identifyUser(embedding);
           }
@@ -350,7 +398,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
   // NUEVO: Manejador inteligente que consulta al backend de IA (/api/v1/ai/parse-speech)
   const handleVoiceCommand = async (transcript: string) => {
     const currentStep = registrationStepRef.current;
-    console.log("🤖 [IA Voice Parse]: Paso actual =", currentStep, "| Texto capturado =", transcript);
+    log('VOICE', 'Comando recibido', { step: currentStep, transcript });
 
     // Si estamos en idle, manejamos el flujo normal de rutina de usuario ya registrado
     if (currentStep === 'idle') {
@@ -361,13 +409,15 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
       const hasMember = selectedMemberRef.current || membersRef.current.length > 0;
       if (isAffirmative && hasMember) {
         const user = selectedMemberRef.current || membersRef.current[membersRef.current.length - 1];
+        log('VOICE', 'Confirmación afirmativa -> iniciando rutina', { user: user?.name });
         speak(`Perfecto${user?.name ? ' ' + user.name : ''}. Iniciando tu rutina.`);
         setTimeout(() => handleStartWorkoutForSelected(), 1200);
       } else if (isNegative && hasMember) {
+        log('VOICE', 'Respuesta negativa -> agregar otro integrante');
         handleAddAnother();
       } else if (!hasMember) {
         // No hay usuario identificado esperando confirmación: ignorar ruido
-        console.log("🤖 [IA Voice Parse]: Sin confirmación pendiente, ignorando.", transcript);
+        log('VOICE', 'Sin confirmación pendiente, ignorando', { transcript });
       } else {
         speak('No entendí. ¿Deseas iniciar tu rutina? Responde sí o no.', () => startListening());
       }
@@ -383,7 +433,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
       });
 
       const { nextStep, resolvedData, aiMessage } = response.data;
-      console.log("🤖 [IA Respuesta]:", { nextStep, resolvedData, aiMessage });
+      log('VOICE', 'Respuesta IA parse-speech', { nextStep, resolvedData, aiMessage });
 
       // Guardamos los datos que la IA pudo extraer con éxito
       if (resolvedData?.name) {
@@ -409,7 +459,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
       setMessage('Escuchando respuesta...');
 
     } catch (error) {
-      console.error('❌ [Error IA Parse Speech]:', error);
+      log('VOICE', 'Error en parse-speech', { error });
       speak('No te entendí bien, ¿podrías repetirlo?', () => {
         startListening();
       });
@@ -417,7 +467,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
   };
 
   const executeQuickRegister = async (name: string, goal: string) => {
-    console.log("🚀 [executeQuickRegister]: Registrando usuario...", { name, goal, hasEmbedding: !!lastEmbeddingRef.current });
+    log('REGISTER', 'Ejecutando quick-register', { name, goal, hasEmbedding: !!lastEmbeddingRef.current });
     
     if (!lastEmbeddingRef.current) {
       console.error("❌ [executeQuickRegister Error]: No hay embedding guardado en la referencia.");
@@ -435,14 +485,14 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
         target_rpe: 7.0
       });
       
-      console.log("🚀 [executeQuickRegister Éxito]:", response.data);
+      log('REGISTER', 'Usuario registrado', { id: response.data.id, name: response.data.name });
       updateCurrentUser(response.data);
       addMember(response.data);
       setMessage(`Bienvenido ${name}`);
       speak(`Bienvenido ${name}. ¿Quién más va a entrenar? Toca Iniciar rutina o Agregar otro.`, () => {});
       setMode('members');
     } catch (error) {
-      console.error('❌ [Error registro backend]:', error);
+      log('REGISTER', 'Error en registro backend', { error });
       speak('Hubo un error al registrarte. Inténtalo nuevamente.');
       isDetectingRef.current = false;
     }
@@ -451,6 +501,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
   const handleStartWorkoutForSelected = useCallback(() => {
     stopListening();
     const user = selectedMemberRef.current || currentUserRef.current;
+    log('FLOW', 'Iniciando workout', { user: user?.name });
     if (user) {
       hasTransitionedRef.current = true;
       onUserIdentified(user, streamRef.current);
@@ -472,6 +523,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
   };
 
   const handleResetAll = () => {
+    log('FLOW', 'Reset completo de identificación');
     stopListening();
     updateCurrentUser(null);
     updateShowButtons(false);
@@ -533,25 +585,34 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
     };
 
     const initializeMediaPipe = async () => {
+      const t0 = performance.now();
       try {
         setMessage('Iniciando cámara...');
+        log('INIT', 'Cargando script MediaPipe FaceDetection...');
         await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/face_detection@0.4/face_detection.js');
+        log('INIT', 'Script MediaPipe cargado', { elapsed_ms: Math.round(performance.now() - t0) });
         if (typeof window.FaceDetection === 'undefined') throw new Error('FaceDetection no disponible');
 
         if (!globalFaceDetectionInstance) {
+          const tModel = performance.now();
           globalFaceDetectionInstance = new window.FaceDetection({ locateFile: MEDIAPIPE_LOCATE_FILE });
           globalFaceDetectionInstance.setOptions({ model: 'full', minDetectionConfidence: 0.5 });
           await globalFaceDetectionInstance.initialize();
+          log('INIT', 'Modelo FaceDetection inicializado', { elapsed_ms: Math.round(performance.now() - tModel) });
+        } else {
+          log('INIT', 'Reutilizando instancia global de FaceDetection');
         }
         globalFaceDetectionInstance.onResults((results: any) => onFaceDetectionResults(results));
         faceDetectionRef.current = globalFaceDetectionInstance;
         isInitializedRef.current = true;
 
         // Solicitamos el stream de cámara una sola vez y lo pasaremos a Workout sin recargarlo
+        const tCam = performance.now();
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: 640, height: 480 },
           audio: false
         });
+        log('INIT', 'Stream de cámara obtenido', { elapsed_ms: Math.round(performance.now() - tCam) });
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -583,14 +644,32 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
           rafRef.current = requestAnimationFrame(loop);
         };
         rafRef.current = requestAnimationFrame(loop);
+        log('INIT', 'Bucle de detección iniciado', { total_init_ms: Math.round(performance.now() - t0) });
 
       } catch (error) {
-        console.error('❌ [Error inicialización cámara]:', error);
+        log('INIT', 'Error inicialización cámara/modelo', { error });
         setMessage('Error al iniciar la cámara o el modelo facial.');
       }
     };
+    log('INIT', 'UserIdentification montado, inicializando MediaPipe...');
     initializeMediaPipe();
   }, [onFaceDetectionResults]);
+
+  // Desbloqueo de TTS: el primer gesto del usuario reintenta el mensaje pendiente
+  useEffect(() => {
+    const unlock = () => {
+      if (pendingSpeakRef.current) {
+        const pending = pendingSpeakRef.current;
+        pendingSpeakRef.current = null;
+        setVoiceBlocked(false);
+        log('TTS', 'Gesto del usuario detectado: reintentando mensaje pendiente');
+        speak(pending.text, pending.callback);
+      }
+    };
+    document.addEventListener('pointerdown', unlock);
+    return () => document.removeEventListener('pointerdown', unlock);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="overlay-container">
@@ -632,6 +711,23 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
         <div className="bg-black/60 backdrop-blur-md border border-white/10 px-5 py-3 rounded-2xl shadow-xl w-full text-center">
           <p className="text-sm font-medium text-gray-100">{message}</p>
         </div>
+
+        {/* Aviso de voz bloqueada por autoplay */}
+        {voiceBlocked && (
+          <button
+            onClick={() => {
+              if (pendingSpeakRef.current) {
+                const pending = pendingSpeakRef.current;
+                pendingSpeakRef.current = null;
+                setVoiceBlocked(false);
+                speak(pending.text, pending.callback);
+              }
+            }}
+            className="bg-blue-600/90 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg transition animate-pulse"
+          >
+            🔊 Tocar para activar la voz
+          </button>
+        )}
 
         {/* Acciones */}
         {mode === 'members' ? (

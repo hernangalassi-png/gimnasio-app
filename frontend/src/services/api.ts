@@ -1,5 +1,15 @@
 import axios from 'axios';
 
+// Logger con timestamp para trazar la secuencia completa de la app
+export const log = (tag: string, msg: string, data?: unknown) => {
+  const ts = new Date().toISOString();
+  if (data !== undefined) {
+    console.log(`[${ts}] [${tag}] ${msg}`, data);
+  } else {
+    console.log(`[${ts}] [${tag}] ${msg}`);
+  }
+};
+
 // Forzar HTTPS estrictamente para evitar Mixed Content
 const RENDER_API_URL = 'https://gimnasio-app-ryq8.onrender.com/api/v1';
 
@@ -10,7 +20,7 @@ if (!RENDER_API_URL.startsWith('https://')) {
 
 export const API_URL = RENDER_API_URL;
 
-console.log('API_URL configurada (HTTPS forzado):', API_URL);
+log('API', 'API_URL configurada (HTTPS forzado)', API_URL);
 
 export const api = axios.create({
   baseURL: API_URL,
@@ -20,15 +30,14 @@ export const api = axios.create({
   timeout: 30000, // 30 segundos timeout
 });
 
-// Interceptor para loggear peticiones
+// Interceptor para loggear peticiones con timestamp de inicio
 api.interceptors.request.use(
   (config) => {
+    (config as any).metadata = { startTime: performance.now() };
     const fullURL = `${config.baseURL}${config.url}`;
-    console.log('📡 Petición Axios:', {
-      url: config.url,
-      fullURL: fullURL,
-      method: config.method,
-      protocol: fullURL.startsWith('https://') ? 'HTTPS ✅' : 'HTTP ❌'
+    log('HTTP', `→ ${config.method?.toUpperCase()} ${config.url}`, {
+      fullURL,
+      protocol: fullURL.startsWith('https://') ? 'HTTPS' : 'HTTP'
     });
     return config;
   },
@@ -38,18 +47,24 @@ api.interceptors.request.use(
   }
 );
 
-// Interceptor solo para loggear errores, SIN retry automático
+// Interceptor para loggear respuestas con duración y errores, SIN retry automático
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const start = (response.config as any).metadata?.startTime;
+    const duration = start !== undefined ? Math.round(performance.now() - start) : -1;
+    log('HTTP', `← ${response.status} ${response.config.url}`, { duration_ms: duration });
+    return response;
+  },
   (error) => {
     const config = error.config;
+    const start = config?.metadata?.startTime;
+    const duration = start !== undefined ? Math.round(performance.now() - start) : -1;
 
-    console.error('❌ Error en respuesta Axios:', {
+    log('HTTP', `← ERROR ${config?.url}`, {
       code: error.code,
       message: error.message,
       status: error.response?.status,
-      url: config?.url,
-      fullURL: config ? `${config.baseURL}${config.url}` : 'unknown'
+      duration_ms: duration
     });
 
     // NO reintentar automáticamente aquí para evitar afectar MediaPipe

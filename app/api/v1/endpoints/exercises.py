@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
 from app.core.database import get_db
+from app.core.logging import log
 from app.models.exercise import Exercise as ExerciseModel
 from app.schemas.exercise import Exercise, ExerciseCreate, ExerciseUpdate
 
@@ -20,7 +21,10 @@ def create_exercise(exercise: ExerciseCreate, db: Session = Depends(get_db)):
 
 @router.get("/", response_model=List[Exercise])
 def get_exercises(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    import time
+    t0 = time.perf_counter()
     exercises = db.query(ExerciseModel).offset(skip).limit(limit).all()
+    log("EXERCISES", "GET /exercises", {"count": len(exercises), "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)})
     return exercises
 
 

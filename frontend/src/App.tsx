@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Workout } from './components/Workout';
 import { UserIdentification } from './components/UserIdentification';
+import { log } from './services/api';
 
 interface User {
   id: string;
@@ -14,12 +15,14 @@ function App() {
   const [workoutStream, setWorkoutStream] = useState<MediaStream | null>(null);
 
   const handleUserIdentified = (user: User, stream?: MediaStream | null) => {
+    log('APP', 'Usuario identificado -> mostrando Workout', { user: user.name, hasStream: !!stream });
     setCurrentUser(user);
     setWorkoutStream(stream || null);
     setShowWorkout(true);
   };
 
   const handleBackToIdentification = () => {
+    log('APP', 'Volviendo a identificación');
     setShowWorkout(false);
     setCurrentUser(null);
     if (workoutStream) {

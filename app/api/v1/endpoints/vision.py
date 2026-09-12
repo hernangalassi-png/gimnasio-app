@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
 from app.core.database import get_db
+from app.core.logging import log
 from app.services.vision.face_recognizer import face_recognition_service
 from app.services.vision.pose_counter import pose_tracker_service
 from pydantic import BaseModel
@@ -71,11 +72,15 @@ async def process_pose(
     """
     Process a video frame for pose estimation and exercise counting.
     """
+    import time
+    t0 = time.perf_counter()
     try:
         image_bytes = await file.read()
         result = pose_tracker_service.process_frame(image_bytes, exercise_type)
+        log("POSE", "Frame procesado", {"exercise": exercise_type, "bytes": len(image_bytes), "reps": result.get("reps"), "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)})
         return result
     except Exception as e:
+        log("POSE", "Error procesando frame", {"error": str(e)})
         raise HTTPException(status_code=400, detail=str(e))
 
 

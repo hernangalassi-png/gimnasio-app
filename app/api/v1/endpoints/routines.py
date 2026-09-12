@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.core.database import get_db
+from app.core.logging import log
 from app.models.user import User as UserModel
 from app.models.equipment import Equipment as EquipmentModel
 from app.models.exercise import Exercise as ExerciseModel
@@ -27,8 +28,13 @@ def _rpe_to_level(target_rpe: float) -> str:
 @router.post("/recommend", response_model=List[Exercise])
 def recommend_routine(payload: RoutineRecommendRequest, db: Session = Depends(get_db)):
     """Devuelve ejercicios filtrados según el perfil del usuario y el equipamiento disponible."""
+    import time
+    t0 = time.perf_counter()
+    log("RECOMMEND", "Request recibido", {"user_id": str(payload.user_id), "equipment_ids": payload.available_equipment_ids})
+
     user = db.query(UserModel).filter(UserModel.id == payload.user_id).first()
     if not user:
+        log("RECOMMEND", "Usuario no encontrado", {"user_id": str(payload.user_id)})
         raise HTTPException(status_code=404, detail="User not found")
 
     # Equipamiento disponible
@@ -45,6 +51,7 @@ def recommend_routine(payload: RoutineRecommendRequest, db: Session = Depends(ge
     exercises = db.query(ExerciseModel).all()
     user_goal = user.primary_goal or "salud_general"
     user_level = _rpe_to_level(user.target_rpe or 7.0)
+    log("RECOMMEND", "Perfil usuario", {"goal": user_goal, "level": user_level, "total_exercises": len(exercises), "available_equipment": list(available_ids)})
 
     def _matches(ex: ExerciseModel) -> bool:
         # Equipamiento requerido cubierto
@@ -67,4 +74,5 @@ def recommend_routine(payload: RoutineRecommendRequest, db: Session = Depends(ge
         return (abs(diff - level_order), diff)
 
     filtered.sort(key=_sort_key)
+    log("RECOMMEND", "Resultado", {"filtered": len(filtered), "exercises": [ex.id for ex in filtered], "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)})
     return filtered

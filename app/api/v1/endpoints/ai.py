@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 
+from app.core.logging import log
 from app.schemas.ai import ParseSpeechRequest, ParseSpeechResponse
 from app.services.ai_service import ai_service
 
@@ -17,10 +18,14 @@ def parse_speech(request: ParseSpeechRequest):
     Si la IA falla o la respuesta es confusa, mantiene el paso actual y
     devuelve un mensaje pidiendo amablemente que repita.
     """
-    print(f"🎤 parse-speech: step={request.step} transcript='{request.transcript}'")
+    import time
+    t0 = time.perf_counter()
+    log("AI", "parse-speech request", {"step": request.step, "transcript": request.transcript})
 
-    return ai_service.parse_speech(
+    result = ai_service.parse_speech(
         step=request.step,
         transcript=request.transcript,
         context=request.context,
     )
+    log("AI", "parse-speech response", {"result": result.model_dump() if hasattr(result, 'model_dump') else result, "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)})
+    return result

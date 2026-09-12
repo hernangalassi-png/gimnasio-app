@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { processPoseFrame, getEquipment, getRecommendedRoutines, type Equipment, type Exercise } from '../services/api';
+import { processPoseFrame, getEquipment, getRecommendedRoutines, log, type Equipment, type Exercise } from '../services/api';
 import { Camera, Volume2, HelpCircle, X, Mic } from 'lucide-react';
 
 interface User {
@@ -63,6 +63,7 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
   const setExercise = (ex: string) => { setExerciseState(ex); exerciseRef.current = ex; };
 
   const speak = useCallback((text: string, onEnd?: () => void) => {
+    log('TTS', 'Speak', { text: text.slice(0, 80), hasCallback: !!onEnd });
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       isSpeakingRef.current = true;
@@ -116,7 +117,7 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
     };
     recog.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript.toLowerCase();
-      console.log('[Workout Voz]:', transcript);
+      log('VOICE', 'Comando en workout', { transcript });
       if (/ejemplo|c[oó]mo|ayuda|enseñ|explica|mostr/.test(transcript)) {
         showExerciseExample();
       } else if (/sentadilla/.test(transcript)) {
@@ -155,11 +156,18 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const load = async () => {
+      const t0 = performance.now();
+      log('WORKOUT', 'Cargando equipamiento y recomendaciones', { userId: user.id });
       try {
         const [equipment, routines] = await Promise.all([
           getEquipment(),
           getRecommendedRoutines(user.id, [])
         ]);
+        log('WORKOUT', 'Datos cargados', {
+          equipment: equipment.length,
+          routines: routines.map(r => r.id),
+          elapsed_ms: Math.round(performance.now() - t0)
+        });
         setAvailableEquipment(equipment);
         setRecommendations(routines);
 
@@ -181,10 +189,11 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
             });
           }, 500);
         } else {
+          log('WORKOUT', 'Sin ejercicios recomendados para el perfil');
           setLoadError('No se encontraron ejercicios para tu perfil.');
         }
       } catch (err) {
-        console.error('Error cargando rutina:', err);
+        log('WORKOUT', 'Error cargando rutina', { error: err, elapsed_ms: Math.round(performance.now() - t0) });
         setLoadError('No se pudo cargar la rutina. Intentá de nuevo.');
       } finally {
         setIsLoading(false);
@@ -200,17 +209,21 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
     async function setupCamera() {
       if (videoRef.current) {
         if (stream) {
+          log('WORKOUT', 'Reutilizando stream de cámara de identificación');
           videoRef.current.srcObject = stream;
           streamRef.current = stream;
           try { videoRef.current.play(); } catch (e) {}
         } else if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          const tCam = performance.now();
           const newStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+          log('WORKOUT', 'Nuevo stream de cámara obtenido', { elapsed_ms: Math.round(performance.now() - tCam) });
           videoRef.current.srcObject = newStream;
           streamRef.current = newStream;
           try { videoRef.current.play(); } catch (e) {}
         }
       }
     }
+    log('WORKOUT', 'Workout montado', { user: user?.name, hasStream: !!stream });
     setupCamera();
 
     return () => {
@@ -236,9 +249,17 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0, 320, 240);
         canvas.toBlob(async (blob) => {
+          const tFrame = performance.now();
           try {
             if (blob) {
               const res = await processPoseFrame(blob, exercise);
+              log('POSE', 'Frame procesado', {
+                exercise,
+                reps: res.reps,
+                stage: res.stage,
+                feedback: res.feedback,
+                elapsed_ms: Math.round(performance.now() - tFrame)
+              });
               setReps(res.reps);
               setStage(res.stage);
               setFeedback(res.feedback);
@@ -252,8 +273,8 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
                 }
               }
             }
-          } catch (err) {
-            // Silenciar timeouts para no saturar consola
+          } catch (err: any) {
+            log('POSE', 'Error procesando frame', { message: err?.message, elapsed_ms: Math.round(performance.now() - tFrame) });
           } finally {
             isProcessingRef.current = false;
           }
