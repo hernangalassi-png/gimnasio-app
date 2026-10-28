@@ -38,6 +38,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const rafRef = useRef<number | null>(null);
   const frameCountRef = useRef(0);
   const meshWaitStartRef = useRef(0);
+  const stableFramesRef = useRef(0);
+  const lastDetectionResultsRef = useRef<any>(null);
+  const resultsCountRef = useRef(0);
   const isProcessingFrameRef = useRef(false);
   const hasTransitionedRef = useRef(false);
   const isInitializedRef = useRef(false);
@@ -396,6 +399,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       setTimeout(() => {
           setFaceIconResult(null);
           isDetectingRef.current = false;
+          stableFramesRef.current = 0;
           setFaceStableCount(0);
       }, 3000);
     }
@@ -404,14 +408,21 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const onFaceDetectionResults = useCallback((results: any) => {
     if (isDetectingRef.current) return;
 
+    // MediaPipe puede entregar el mismo objeto de resultados dos veces;
+    // dedupe por identidad para no inflar el contador de frames estables.
+    if (results === lastDetectionResultsRef.current) return;
+    lastDetectionResultsRef.current = results;
+    resultsCountRef.current += 1;
+
     const numFaces = results.detections ? results.detections.length : 0;
-    if (numFaces > 0 || faceStableCount > 0) {
-      log('FACE', 'onResults', { faces: numFaces, stableCount: faceStableCount });
+    if (numFaces > 0 || stableFramesRef.current > 0) {
+      log('FACE', 'onResults', { faces: numFaces, stable: stableFramesRef.current, n: resultsCountRef.current });
     }
 
     if (results.detections && results.detections.length > 0) {
       const largest = selectLargestFace(results.detections);
       if (!largest) {
+        stableFramesRef.current = 0;
         setFaceStableCount(0);
         lastEmbeddingRef.current = null;
         return;
@@ -424,31 +435,33 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
           ? meshEmbeddingRef.current
           : embedding;
         lastEmbeddingRef.current = best;
-        setFaceStableCount(prev => {
-          const newCount = prev + 1;
-          if (newCount >= 15 && !isDetectingRef.current) {
-            const hasMeshEmb = !!(meshEmbeddingRef.current && meshEmbeddingRef.current.length > 0);
-            if (faceMeshRef.current && !hasMeshEmb) {
-              // FaceMesh aún no entregó su primer resultado (warm-up wasm ~2-3s):
-              // esperar hasta 2.5s antes de caer al embedding geométrico, que casi
-              // nunca matchea contra los vectores de 936 dims almacenados.
-              if (!meshWaitStartRef.current) meshWaitStartRef.current = performance.now();
-              const waited = performance.now() - meshWaitStartRef.current;
-              if (waited < 2500) {
-                log('FACE', 'Esperando primer embedding FaceMesh', { waited_ms: Math.round(waited) });
-                return newCount - 1; // mantener en 14 hasta que llegue el mesh o venza el timeout
-              }
-              log('FACE', 'Timeout esperando FaceMesh -> fallback geométrico');
+        stableFramesRef.current += 1;
+        setFaceStableCount(stableFramesRef.current);
+        const newCount = stableFramesRef.current;
+        if (newCount >= 15 && !isDetectingRef.current) {
+          const hasMeshEmb = !!(meshEmbeddingRef.current && meshEmbeddingRef.current.length > 0);
+          if (faceMeshRef.current && !hasMeshEmb) {
+            // FaceMesh aún no entregó su primer resultado (warm-up wasm ~2-3s):
+            // esperar hasta 2.5s antes de caer al embedding geométrico, que casi
+            // nunca matchea contra los vectores de 936 dims almacenados.
+            if (!meshWaitStartRef.current) meshWaitStartRef.current = performance.now();
+            const waited = performance.now() - meshWaitStartRef.current;
+            if (waited < 2500) {
+              log('FACE', 'Esperando primer embedding FaceMesh', { waited_ms: Math.round(waited) });
+              stableFramesRef.current -= 1; // mantener en 14 hasta el mesh o el timeout
+              setFaceStableCount(stableFramesRef.current);
+              return;
             }
-            meshWaitStartRef.current = 0;
-            log('FACE', '15 frames estables -> ejecutando identificación', { embeddingSource: hasMeshEmb ? 'facemesh' : 'geometric' });
-            isDetectingRef.current = true;
-            identifyUser(best);
+            log('FACE', 'Timeout esperando FaceMesh -> fallback geométrico');
           }
-          return newCount;
-        });
+          meshWaitStartRef.current = 0;
+          log('FACE', '15 frames estables -> ejecutando identificación', { embeddingSource: hasMeshEmb ? 'facemesh' : 'geometric' });
+          isDetectingRef.current = true;
+          identifyUser(best);
+        }
       }
     } else {
+      stableFramesRef.current = 0;
       setFaceStableCount(0);
       lastEmbeddingRef.current = null;
       meshEmbeddingRef.current = null; // snapshot stale: la cara salió de cuadro
@@ -577,6 +590,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     updateShowButtons(false);
     updateRegistrationStep('idle');
     isDetectingRef.current = false;
+    stableFramesRef.current = 0;
     setFaceStableCount(0);
     setFaceIconResult(null);
     pendingNameRef.current = '';
@@ -595,6 +609,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     updateShowButtons(false);
     updateRegistrationStep('idle');
     isDetectingRef.current = false;
+    stableFramesRef.current = 0;
     setFaceStableCount(0);
     setFaceIconResult(null);
     pendingNameRef.current = '';
