@@ -815,28 +815,30 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   return (
     <div className="overlay-container">
       <style>{`
-        .face-id-icon { color: rgba(255,255,255,0.35); transition: color .35s ease, filter .35s ease; }
-        .face-id-icon[data-state="scanning"] {
-          animation: faceIdHue 2.4s linear infinite;
-          filter: drop-shadow(0 0 14px currentColor);
+        .face-id-badge {
+          width: 34px; height: 34px; border-radius: 9999px;
+          display: flex; align-items: center; justify-content: center;
+          color: rgba(255,255,255,0.4);
+          background: rgba(0,0,0,0.45);
+          border: 1px solid rgba(255,255,255,0.12);
+          backdrop-filter: blur(6px);
+          transition: color .3s ease, box-shadow .3s ease, border-color .3s ease;
         }
-        .face-id-icon[data-state="success"] { color: #4ade80; filter: drop-shadow(0 0 18px rgba(74,222,128,0.85)); }
-        .face-id-icon[data-state="error"] { color: #f87171; filter: drop-shadow(0 0 18px rgba(248,113,113,0.85)); }
-        @keyframes faceIdHue {
-          0%   { color: #67e8f9; }
-          25%  { color: #60a5fa; }
-          50%  { color: #a78bfa; }
-          75%  { color: #38bdf8; }
-          100% { color: #67e8f9; }
+        .face-id-badge[data-state="scanning"] {
+          animation: faceIdPulse 1.8s ease-in-out infinite;
+          border-color: rgba(103,232,249,0.5);
         }
-        .face-id-scanline {
-          position: absolute; left: 14%; right: 14%; height: 2px; border-radius: 2px;
-          background: linear-gradient(90deg, transparent, currentColor, transparent);
-          animation: faceIdScan 1.9s ease-in-out infinite;
+        .face-id-badge[data-state="success"] {
+          color: #4ade80; border-color: rgba(74,222,128,0.8);
+          box-shadow: 0 0 14px rgba(74,222,128,0.7);
         }
-        @keyframes faceIdScan {
-          0%, 100% { top: 16%; opacity: 0.25; }
-          50%      { top: 80%; opacity: 1; }
+        .face-id-badge[data-state="error"] {
+          color: #f87171; border-color: rgba(248,113,113,0.8);
+          box-shadow: 0 0 14px rgba(248,113,113,0.7);
+        }
+        @keyframes faceIdPulse {
+          0%, 100% { color: #67e8f9; box-shadow: 0 0 4px rgba(103,232,249,0.3); }
+          50%      { color: #a78bfa; box-shadow: 0 0 14px rgba(167,139,250,0.55); }
         }
       `}</style>
       {/* Cámara a pantalla completa */}
@@ -860,30 +862,25 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         </div>
       </div>
 
-      {/* Icono rostro estilo FaceID: guía de posición + estado del reconocimiento */}
-      <div className="absolute top-[26%] left-1/2 -translate-x-1/2 z-20 pointer-events-none">
-        <div className="face-id-icon relative w-28 h-28" data-state={faceIconState}>
-          <svg viewBox="0 0 96 96" fill="none" className="w-full h-full">
-            {/* Esquinas tipo viewfinder */}
-            <path d="M8 24V12a4 4 0 0 1 4-4h12" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
-            <path d="M72 8h12a4 4 0 0 1 4 4v12" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
-            <path d="M88 72v12a4 4 0 0 1-4 4H72" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
-            <path d="M24 88H12a4 4 0 0 1-4-4V72" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
-            {/* Contorno del rostro */}
-            <ellipse cx="48" cy="50" rx="20" ry="24" stroke="currentColor" strokeWidth="3"/>
-            {/* Ojos */}
-            <circle cx="41" cy="44" r="2.6" fill="currentColor"/>
-            <circle cx="55" cy="44" r="2.6" fill="currentColor"/>
-            {/* Nariz */}
-            <path d="M48 46v9c0 1.5-1 2.5-2.5 2.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/>
-            {/* Boca */}
-            <path d="M41 63c2.5 3 11.5 3 14 0" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"/>
-            {/* Check de éxito */}
-            {faceIconState === 'success' && (
-              <path d="M38 50l7 7 14-16" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
-            )}
-          </svg>
-          {faceIconState === 'scanning' && <div className="face-id-scanline" />}
+      {/* Indicador sutil de verificación facial (tipo privacy-dot): esquina sup. derecha */}
+      <div className="absolute top-5 right-4 z-20 pointer-events-none">
+        <div className="face-id-badge" data-state={faceIconState}>
+          {faceIconState === 'success' ? (
+            <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5">
+              <path d="M6 12.5l4 4 8-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          ) : faceIconState === 'error' ? (
+            <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5">
+              <path d="M8 8l8 8M16 8l-8 8" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/>
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5">
+              <ellipse cx="12" cy="12.5" rx="5" ry="6" stroke="currentColor" strokeWidth="1.6"/>
+              <circle cx="10.2" cy="11" r="0.9" fill="currentColor"/>
+              <circle cx="13.8" cy="11" r="0.9" fill="currentColor"/>
+              <path d="M10.3 15.2c.7.7 2.7.7 3.4 0" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+            </svg>
+          )}
         </div>
       </div>
 
