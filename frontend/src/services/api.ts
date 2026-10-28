@@ -118,3 +118,50 @@ export const getRecommendedRoutines = async (userId: string, availableEquipmentI
   });
   return response.data;
 };
+
+// ---- Sesiones de entrenamiento (recibos durables APPLIED) ----
+
+export interface WorkoutSession {
+  id: string;
+  session_mode: 'solo' | 'dueto' | 'grupo';
+  user_ids: string[];
+  started_at: string;
+  ended_at?: string | null;
+  status: 'in_progress' | 'completed' | 'cancelled';
+}
+
+export interface SessionSummary {
+  session_id: string;
+  session_mode: string;
+  user_ids: string[];
+  started_at: string;
+  ended_at?: string | null;
+  status: string;
+  total_sets: number;
+  total_volume_kg: number;
+}
+
+export interface LogSetPayload {
+  user_id: string;
+  exercise_id: string;
+  set_number: number;
+  target_reps: number;
+  completed_reps: number;
+  weight_used_kg?: number | null;
+  rpe_reported?: number | null;
+}
+
+export const startWorkoutSession = async (userIds: string[]): Promise<WorkoutSession> => {
+  const response = await api.post('/sessions/start', { user_ids: userIds });
+  return response.data;
+};
+
+export const logWorkoutSet = async (sessionId: string, payload: LogSetPayload) => {
+  const response = await api.post(`/sessions/${sessionId}/log_set`, payload);
+  return response.data;
+};
+
+export const endWorkoutSession = async (sessionId: string): Promise<SessionSummary> => {
+  const response = await api.post(`/sessions/${sessionId}/end`);
+  return response.data;
+};

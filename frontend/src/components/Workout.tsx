@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { processPoseFrame, getEquipment, getRecommendedRoutines, log, type Equipment, type Exercise } from '../services/api';
+import { processPoseFrame, getEquipment, getRecommendedRoutines, startWorkoutSession, logWorkoutSet, endWorkoutSession, log, type Equipment, type Exercise } from '../services/api';
 import { Camera, Volume2, HelpCircle, X, Mic } from 'lucide-react';
 
 interface User {
@@ -34,7 +34,7 @@ const EXERCISE_GUIDES: Record<string, { title: string; steps: string[]; spoken: 
   }
 };
 
-export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null }> = ({ user, stream }) => {
+export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: MediaStream | null; onBack?: () => void }> = ({ user, members, stream, onBack }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const isProcessingRef = useRef(false);
   const lastSpokenFeedbackRef = useRef<string>('');
@@ -59,6 +59,25 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
   const streamRef = useRef<MediaStream | null>(null);
   const helpActiveRef = useRef(false);
   const resumeAtRef = useRef<number | null>(null);
+
+  // ---- Estado de sesión durable (recibos APPLIED) ----
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionEndedRef = useRef(false);
+  const lastPoseRepsRef = useRef(0);
+  const activeExerciseIdRef = useRef<string | null>(null);
+  const setCountByExerciseRef = useRef<Record<string, number>>({});
+
+  // ---- Gate de propuestas por voz (ADN: propuesta -> decisión -> APPLIED) ----
+  const pendingProposalRef = useRef<{
+    id: string;
+    action: 'change_exercise' | 'end_workout';
+    payload: { rec?: Exercise };
+    question: string;
+    expiresAt: number;
+  } | null>(null);
+  const proposalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [pendingProposalUI, setPendingProposalUI] = useState<string | null>(null);
+  const repsDisplayRef = useRef(0);
 
   const setExercise = (ex: string) => { setExerciseState(ex); exerciseRef.current = ex; };
 
@@ -94,11 +113,155 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
     speak(guide.spoken);
   }, [speak]);
 
+  // Persiste la serie pendiente del ejercicio actual (el contador backend resetea al cambiar de tipo)
+  const flushPendingSet = useCallback(async () => {
+    const sessionId = sessionIdRef.current;
+    const exerciseId = activeExerciseIdRef.current;
+    const reps = lastPoseRepsRef.current;
+    if (!sessionId || !exerciseId || reps <= 0 || !user?.id) return;
+    const setNumber = (setCountByExerciseRef.current[exerciseId] || 0) + 1;
+    setCountByExerciseRef.current[exerciseId] = setNumber;
+    lastPoseRepsRef.current = 0;
+    try {
+      await logWorkoutSet(sessionId, {
+        user_id: user.id,
+        exercise_id: exerciseId,
+        set_number: setNumber,
+        target_reps: reps,
+        completed_reps: reps,
+      });
+      log('SET', 'Serie registrada (APPLIED)', { sessionId, exerciseId, setNumber, reps });
+    } catch (err) {
+      log('SET', 'Error registrando serie', { exerciseId, setNumber, error: err });
+    }
+  }, [user?.id]);
+
+  // Cambio de ejercicio: persiste la serie anterior antes de resetear el contador
+  const changeExercise = useCallback((rec: Exercise, announce?: string) => {
+    if (rec.exercise_type === exerciseRef.current) return;
+    flushPendingSet();
+    setExercise(rec.exercise_type);
+    setSelectedTitle(rec.title);
+    activeExerciseIdRef.current = rec.id;
+    speak(announce || `Cambiamos a ${rec.title}.`);
+  }, [flushPendingSet, speak]);
+
+  // ---- Máquina de propuestas: ningún comando mutador por voz ejecuta sin confirmación ----
+  const clearProposal = useCallback(() => {
+    if (proposalTimerRef.current) {
+      clearTimeout(proposalTimerRef.current);
+      proposalTimerRef.current = null;
+    }
+    pendingProposalRef.current = null;
+    setPendingProposalUI(null);
+  }, []);
+
+  const proposeAction = useCallback((p: { id: string; action: 'change_exercise' | 'end_workout'; payload: { rec?: Exercise }; question: string }) => {
+    clearProposal();
+    pendingProposalRef.current = { ...p, expiresAt: Date.now() + 10000 };
+    setPendingProposalUI(p.question);
+    log('GATE', 'Propuesta emitida', { action: p.action, expires_in_s: 10 });
+    proposalTimerRef.current = setTimeout(() => {
+      if (pendingProposalRef.current?.id === p.id) {
+        log('GATE', 'Propuesta expirada (EXPIRED)', { action: p.action });
+        clearProposal();
+      }
+    }, 10000);
+    speak(p.question);
+  }, [clearProposal, speak]);
+
+  // APPLIED: la propuesta solo se ejecuta tras confirmación explícita
+  const applyProposal = useCallback((p: NonNullable<typeof pendingProposalRef.current>) => {
+    log('GATE', 'Propuesta confirmada -> aplicando (APPLIED)', { action: p.action });
+    clearProposal();
+    if (p.action === 'change_exercise' && p.payload.rec) {
+      changeExercise(p.payload.rec, `Listo. Ahora hacemos ${p.payload.rec.title}.`);
+    } else if (p.action === 'end_workout') {
+      speak('Perfecto. Cerramos la rutina.', () => onBack?.());
+    }
+  }, [clearProposal, changeExercise, speak, onBack]);
+
+  const cancelProposal = useCallback(() => {
+    if (pendingProposalRef.current) {
+      log('GATE', 'Propuesta cancelada (CANCELLED)', { action: pendingProposalRef.current.action });
+    }
+    clearProposal();
+    speak('Cancelado.');
+  }, [clearProposal, speak]);
+
+  const findExerciseMention = useCallback((transcript: string): Exercise | undefined => {
+    if (/sentadilla/.test(transcript)) return recommendations.find(r => r.exercise_type === 'squat');
+    if (/flexion|lagartija|plancha de brazos/.test(transcript)) return recommendations.find(r => r.exercise_type === 'pushup');
+    return undefined;
+  }, [recommendations]);
+
+  // Árbitro de voz: mutadores pasan por propuesta->confirmación; read-only ejecutan directo
+  const handleWorkoutVoice = useCallback((transcript: string) => {
+    const isAffirmative = /(^|\s)(s[ií]|dale|ok|okay|bueno|perfecto|confirmo|vamos|adelante)/i.test(transcript);
+    const isNegative = /(^|\s)(no|cancela|espera|pará|para|todav[ií]a no|mejor no)/i.test(transcript);
+    const pending = pendingProposalRef.current && Date.now() < pendingProposalRef.current.expiresAt
+      ? pendingProposalRef.current
+      : null;
+
+    if (pending) {
+      if (isAffirmative) { applyProposal(pending); return; }
+      if (isNegative) { cancelProposal(); return; }
+      const correction = findExerciseMention(transcript);
+      if (correction && correction.exercise_type !== exerciseRef.current) {
+        log('GATE', 'Corrección detectada -> nueva propuesta', { nuevo: correction.title });
+        proposeAction({
+          id: `px-${Date.now()}`,
+          action: 'change_exercise',
+          payload: { rec: correction },
+          question: `¿Querés cambiar a ${correction.title}? Decí sí para confirmar.`
+        });
+        return;
+      }
+      log('GATE', 'Input ambiguo con propuesta pendiente; ignorado', { transcript });
+      return;
+    }
+
+    if (isAffirmative || isNegative) {
+      log('GATE', 'Respuesta sin propuesta pendiente; ignorada', { transcript });
+      return;
+    }
+    if (/ejemplo|c[oó]mo|ayuda|enseñ|explica|mostr/.test(transcript)) { showExerciseExample(); return; }
+    if (/cu[aá]ntas|cu[aá]nto llevo|repeticiones|contador/.test(transcript)) {
+      speak(`Llevás ${repsDisplayRef.current} repeticiones.`);
+      return;
+    }
+    const rec = findExerciseMention(transcript);
+    if (rec && rec.exercise_type !== exerciseRef.current) {
+      proposeAction({
+        id: `px-${Date.now()}`,
+        action: 'change_exercise',
+        payload: { rec },
+        question: `¿Querés cambiar a ${rec.title}? Decí sí para confirmar.`
+      });
+      return;
+    }
+    if (/terminar|finalizar|salir|acabar/.test(transcript)) {
+      proposeAction({
+        id: `pw-${Date.now()}`,
+        action: 'end_workout',
+        payload: {},
+        question: '¿Querés terminar la rutina? Decí sí para confirmar.'
+      });
+      return;
+    }
+    log('VOICE', 'Comando no reconocido', { transcript });
+  }, [applyProposal, cancelProposal, findExerciseMention, proposeAction, showExerciseExample, speak]);
+
   // Escucha de comandos de voz durante la rutina ("ejemplo", "cómo", "ayuda")
   const startListening = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
-    if (helpActiveRef.current || isSpeakingRef.current || recognitionRef.current) return;
+    if (helpActiveRef.current || recognitionRef.current) return;
+    if (isSpeakingRef.current) {
+      // Reintentar cuando termine el TTS: la confirmación por voz necesita el mic activo
+      if (activeRef.current) setTimeout(startListening, 800);
+      return;
+    }
 
     const recog = new SpeechRecognition();
     recog.lang = 'es-ES';
@@ -118,15 +281,7 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
     recog.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript.toLowerCase();
       log('VOICE', 'Comando en workout', { transcript });
-      if (/ejemplo|c[oó]mo|ayuda|enseñ|explica|mostr/.test(transcript)) {
-        showExerciseExample();
-      } else if (/sentadilla/.test(transcript)) {
-        const rec = recommendations.find(r => r.exercise_type === 'squat');
-        if (rec) { setExercise(rec.exercise_type); setSelectedTitle(rec.title); speak(`Cambiamos a ${rec.title}.`); }
-      } else if (/flexion|lagartija|plancha de brazos/.test(transcript)) {
-        const rec = recommendations.find(r => r.exercise_type === 'pushup');
-        if (rec) { setExercise(rec.exercise_type); setSelectedTitle(rec.title); speak(`Cambiamos a ${rec.title}.`); }
-      }
+      handleWorkoutVoice(transcript);
     };
     try {
       recog.start();
@@ -135,7 +290,7 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
       console.warn('[Workout start error]:', e.message);
       setMicBlocked(true);
     }
-  }, [showExerciseExample, speak]);
+  }, [showExerciseExample, handleWorkoutVoice, speak]);
 
   useEffect(() => {
     activeRef.current = true;
@@ -159,10 +314,24 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
       const t0 = performance.now();
       log('WORKOUT', 'Cargando equipamiento y recomendaciones', { userId: user.id });
       try {
-        const [equipment, routines] = await Promise.all([
+        // user_ids para la sesión: usuario activo primero, luego el resto de integrantes (máx 2 por schema)
+        const userIds = [...new Set([user.id, ...(members || []).map(m => m.id)])].slice(0, 2);
+        if ((members?.length || 0) + 1 > 2) {
+          log('SESSION', 'Backend limita sesiones a 2 usuarios; se trunca la lista', { members: (members || []).map(m => m.name) });
+        }
+
+        const [equipment, routines, session] = await Promise.all([
           getEquipment(),
-          getRecommendedRoutines(user.id, [])
+          getRecommendedRoutines(user.id, []),
+          startWorkoutSession(userIds).catch(err => {
+            log('SESSION', 'Error iniciando sesión', { error: err });
+            return null;
+          })
         ]);
+        if (session) {
+          sessionIdRef.current = session.id;
+          log('SESSION', 'Sesión iniciada', { id: session.id, mode: session.session_mode, users: session.user_ids });
+        }
         log('WORKOUT', 'Datos cargados', {
           equipment: equipment.length,
           routines: routines.map(r => r.id),
@@ -175,6 +344,7 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
           const first = routines[0];
           setExercise(first.exercise_type);
           setSelectedTitle(first.title);
+          activeExerciseIdRef.current = first.id;
 
           const equipmentText = first.required_equipment_ids?.length
             ? ` Vamos a usar ${first.required_equipment_ids
@@ -201,7 +371,21 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
     };
 
     load();
-    return () => { if (timer) clearTimeout(timer); };
+    return () => {
+      if (timer) clearTimeout(timer);
+      // Al desmontar: persistir serie pendiente y cerrar sesión (recibo APPLIED final)
+      if (sessionIdRef.current && !sessionEndedRef.current) {
+        sessionEndedRef.current = true;
+        const sid = sessionIdRef.current;
+        Promise.resolve()
+          .then(() => flushPendingSet())
+          .finally(() => {
+            endWorkoutSession(sid)
+              .then(s => log('SESSION', 'Sesión cerrada (APPLIED)', { id: sid, totalSets: s.total_sets, volumeKg: s.total_volume_kg }))
+              .catch(e => log('SESSION', 'Error cerrando sesión', { id: sid, error: e }));
+          });
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -260,6 +444,8 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
                 feedback: res.feedback,
                 elapsed_ms: Math.round(performance.now() - tFrame)
               });
+              lastPoseRepsRef.current = res.reps;
+              repsDisplayRef.current = res.reps;
               setReps(res.reps);
               setStage(res.stage);
               setFeedback(res.feedback);
@@ -351,6 +537,27 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
         </div>
       )}
 
+      {/* Propuesta pendiente: confirmación por voz (sí/no) o táctil */}
+      {pendingProposalUI && (
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 bg-gray-900/95 border border-blue-500/40 rounded-2xl shadow-2xl p-5 w-full max-w-sm text-center space-y-4">
+          <p className="text-sm font-medium text-gray-100">{pendingProposalUI}</p>
+          <div className="flex space-x-3">
+            <button
+              onClick={() => { if (pendingProposalRef.current) applyProposal(pendingProposalRef.current); }}
+              className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-xl font-bold text-sm transition"
+            >
+              Sí
+            </button>
+            <button
+              onClick={cancelProposal}
+              className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-2.5 rounded-xl font-bold text-sm transition"
+            >
+              No
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Overlay inferior: orbe + feedback */}
       <div className="absolute bottom-[calc(2rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-30 flex flex-col items-center space-y-4 w-full max-w-md px-6">
         {/* Orbe del asistente */}
@@ -383,7 +590,7 @@ export const Workout: React.FC<{ user?: User | null; stream?: MediaStream | null
           {recommendations.map((rec) => (
             <button
               key={rec.id}
-              onClick={() => { setExercise(rec.exercise_type); setSelectedTitle(rec.title); speak(`Cambiamos a ${rec.title}. ${rec.description || ''}`); }}
+              onClick={() => changeExercise(rec, `Cambiamos a ${rec.title}. ${rec.description || ''}`)}
               className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition ${selectedTitle === rec.title ? 'bg-blue-600 text-white' : 'bg-white/10 text-gray-300 backdrop-blur-md'}`}
             >
               {rec.title}

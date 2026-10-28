@@ -11,12 +11,14 @@ interface User {
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [workoutMembers, setWorkoutMembers] = useState<User[]>([]);
   const [showWorkout, setShowWorkout] = useState(false);
   const [workoutStream, setWorkoutStream] = useState<MediaStream | null>(null);
 
-  const handleUserIdentified = (user: User, stream?: MediaStream | null) => {
-    log('APP', 'Usuario identificado -> mostrando Workout', { user: user.name, hasStream: !!stream });
+  const handleUserIdentified = (user: User, members: User[], stream?: MediaStream | null) => {
+    log('APP', 'Usuario identificado -> mostrando Workout', { user: user.name, members: members.map(m => m.name), hasStream: !!stream });
     setCurrentUser(user);
+    setWorkoutMembers(members);
     setWorkoutStream(stream || null);
     setShowWorkout(true);
   };
@@ -37,7 +39,7 @@ function App() {
         <UserIdentification onUserIdentified={handleUserIdentified} />
       ) : (
         <div>
-          <Workout user={currentUser} stream={workoutStream} />
+          <Workout user={currentUser} members={workoutMembers} stream={workoutStream} onBack={handleBackToIdentification} />
           <button
             onClick={handleBackToIdentification}
             className="fixed top-4 right-4 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg z-50"

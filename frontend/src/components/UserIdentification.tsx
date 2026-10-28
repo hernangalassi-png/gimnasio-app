@@ -26,7 +26,7 @@ interface FaceDetectionResult {
   user?: User;
 }
 
-export const UserIdentification: React.FC<{ onUserIdentified: (user: User, stream?: MediaStream | null) => void }> = ({ onUserIdentified }) => {
+export const UserIdentification: React.FC<{ onUserIdentified: (user: User, members: User[], stream?: MediaStream | null) => void }> = ({ onUserIdentified }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceDetectionRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -501,10 +501,11 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, strea
   const handleStartWorkoutForSelected = useCallback(() => {
     stopListening();
     const user = selectedMemberRef.current || currentUserRef.current;
-    log('FLOW', 'Iniciando workout', { user: user?.name });
+    const allMembers = membersRef.current.length > 0 ? membersRef.current : (user ? [user] : []);
+    log('FLOW', 'Iniciando workout', { user: user?.name, members: allMembers.map(m => m.name) });
     if (user) {
       hasTransitionedRef.current = true;
-      onUserIdentified(user, streamRef.current);
+      onUserIdentified(user, allMembers, streamRef.current);
     }
   }, [onUserIdentified]);
 
