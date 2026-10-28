@@ -40,7 +40,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const meshWaitStartRef = useRef(0);
   const stableFramesRef = useRef(0);
   const lastDetectionResultsRef = useRef<any>(null);
+  const lastDeliveryMsRef = useRef(0);
   const resultsCountRef = useRef(0);
+  const missesRef = useRef(0);
   const isProcessingFrameRef = useRef(false);
   const hasTransitionedRef = useRef(false);
   const isInitializedRef = useRef(false);
@@ -400,6 +402,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
           setFaceIconResult(null);
           isDetectingRef.current = false;
           stableFramesRef.current = 0;
+          missesRef.current = 0;
           setFaceStableCount(0);
       }, 3000);
     }
@@ -412,6 +415,12 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     // dedupe por identidad para no inflar el contador de frames estables.
     if (results === lastDetectionResultsRef.current) return;
     lastDetectionResultsRef.current = results;
+
+    // El shim de MediaPipe entrega dos objetos distintos por el mismo frame
+    // (~0ms de separación); los envíos reales del bucle llegan a >50ms.
+    const nowMs = performance.now();
+    if (nowMs - lastDeliveryMsRef.current < 40) return;
+    lastDeliveryMsRef.current = nowMs;
     resultsCountRef.current += 1;
 
     const numFaces = results.detections ? results.detections.length : 0;
@@ -420,13 +429,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     }
 
     if (results.detections && results.detections.length > 0) {
+      missesRef.current = 0;
       const largest = selectLargestFace(results.detections);
-      if (!largest) {
-        stableFramesRef.current = 0;
-        setFaceStableCount(0);
-        lastEmbeddingRef.current = null;
-        return;
-      }
+      if (!largest) return; // bbox inválido: ni suma ni resetea
 
       const embedding = extractEmbedding(largest);
       if (embedding.length > 0) {
@@ -461,11 +466,16 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         }
       }
     } else {
-      stableFramesRef.current = 0;
-      setFaceStableCount(0);
-      lastEmbeddingRef.current = null;
-      meshEmbeddingRef.current = null; // snapshot stale: la cara salió de cuadro
-      meshWaitStartRef.current = 0;
+      // La detección parpadea: tolerar hasta 2 misses seguidos (~200ms) antes
+      // de dar la cara por perdida, resetear el contador y soltar el snapshot.
+      missesRef.current += 1;
+      if (missesRef.current >= 3) {
+        stableFramesRef.current = 0;
+        setFaceStableCount(0);
+        lastEmbeddingRef.current = null;
+        meshEmbeddingRef.current = null;
+        meshWaitStartRef.current = 0;
+      }
     }
   }, [identifyUser]);
 
@@ -591,6 +601,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     updateRegistrationStep('idle');
     isDetectingRef.current = false;
     stableFramesRef.current = 0;
+    missesRef.current = 0;
     setFaceStableCount(0);
     setFaceIconResult(null);
     pendingNameRef.current = '';
@@ -610,6 +621,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     updateRegistrationStep('idle');
     isDetectingRef.current = false;
     stableFramesRef.current = 0;
+    missesRef.current = 0;
     setFaceStableCount(0);
     setFaceIconResult(null);
     pendingNameRef.current = '';
