@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-1.5-flash"
     # Modelo Live API (audio nativo). Free tier: ~3 sesiones concurrentes
     LIVE_MODEL: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    # Voz prebuilt de Gemini Live (Puck, Charon, Kore, Fenrir, Aoede, ...)
+    LIVE_VOICE: str = "Aoede"
     
     class Config:
         env_file = ".env"

@@ -108,6 +108,13 @@ async def live_ws(websocket: WebSocket):
 
     config = types.LiveConnectConfig(
         response_modalities=["AUDIO"],
+        speech_config=types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=settings.LIVE_VOICE,
+                )
+            )
+        ),
         system_instruction=SYSTEM_INSTRUCTION,
         tools=LIVE_TOOLS,
         output_audio_transcription=types.AudioTranscriptionConfig(),

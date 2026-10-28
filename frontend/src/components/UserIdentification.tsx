@@ -113,7 +113,16 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       stopListening();
 
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'es-ES';
+      utterance.lang = 'es-AR';
+      // Preferir voces rioplatenses/latinoamericanas si el dispositivo las tiene
+      const voices = window.speechSynthesis.getVoices();
+      const preferred = voices.find(v => /^es-(AR|UY|PY)/i.test(v.lang))
+        || voices.find(v => /^es-(419|MX|US|CO|CL)/i.test(v.lang))
+        || voices.find(v => /^es/i.test(v.lang));
+      if (preferred) {
+        utterance.voice = preferred;
+        utterance.lang = preferred.lang;
+      }
       utterance.rate = 1;
       utterance.pitch = 1;
 
@@ -863,17 +872,6 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       />
       <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/60 pointer-events-none" />
 
-      {/* Overlay superior: estado de detección */}
-      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20">
-        <div className="bg-black/60 backdrop-blur-md border border-white/10 px-5 py-2 rounded-full shadow-xl">
-          <p className="text-xs text-gray-200 font-medium">
-            {faceStableCount > 0
-              ? `Detectando rostro... ${Math.min(faceStableCount, 60)}/60`
-              : 'Esperando detección facial...'}
-          </p>
-        </div>
-      </div>
-
       {/* Indicador sutil de verificación facial (tipo privacy-dot): esquina sup. derecha */}
       <div className="absolute top-5 right-4 z-20 pointer-events-none">
         <div className="face-id-badge" data-state={faceIconState}>
@@ -957,13 +955,13 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
               </button>
               <button
                 onClick={handleAddAnother}
-                className="flex-1 bg-blue-600/90 hover:bg-blue-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+                className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
               >
                 Agregar otro
               </button>
               <button
                 onClick={handleResetAll}
-                className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+                className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
               >
                 Reiniciar
               </button>
@@ -977,7 +975,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
                   speak('No te alcanzo a ver bien, acércate un poco a la cámara');
                   setMessage('No te alcanzo a ver bien, acércate un poco a la cámara');
                 }}
-                className="bg-yellow-600/90 hover:bg-yellow-700 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-lg transition"
+                className="bg-white/10 hover:bg-white/20 text-gray-200 px-6 py-2.5 rounded-xl font-bold text-sm transition"
               >
                 No me veo bien
               </button>
@@ -993,13 +991,13 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
                 </button>
                 <button
                   onClick={handleAddAnother}
-                  className="flex-1 bg-blue-600/90 hover:bg-blue-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
                 >
                   Agregar otro
                 </button>
                 <button
                   onClick={handleResetAll}
-                  className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
                 >
                   Reiniciar
                 </button>
