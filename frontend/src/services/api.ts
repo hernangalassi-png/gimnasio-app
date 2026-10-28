@@ -13,14 +13,18 @@ export const log = (tag: string, msg: string, data?: unknown) => {
 // Forzar HTTPS estrictamente para evitar Mixed Content
 const RENDER_API_URL = 'https://gimnasio-app-ryq8.onrender.com/api/v1';
 
-// Validar que la URL sea HTTPS
-if (!RENDER_API_URL.startsWith('https://')) {
+// En dev (vite dev server) se puede overridear con VITE_API_URL en .env.development
+// En producción el override NO aplica: siempre Render HTTPS
+const DEV_API_URL = import.meta.env.DEV ? (import.meta.env.VITE_API_URL || '') : '';
+
+// Validar que la URL sea HTTPS (solo aplica al default de producción)
+if (!DEV_API_URL && !RENDER_API_URL.startsWith('https://')) {
   throw new Error('API_URL debe usar HTTPS obligatoriamente');
 }
 
-export const API_URL = RENDER_API_URL;
+export const API_URL = DEV_API_URL || RENDER_API_URL;
 
-log('API', 'API_URL configurada (HTTPS forzado)', API_URL);
+log('API', 'API_URL configurada', { url: API_URL, devOverride: !!DEV_API_URL });
 
 export const api = axios.create({
   baseURL: API_URL,
