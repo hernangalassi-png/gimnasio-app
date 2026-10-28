@@ -6,6 +6,7 @@ import { api, log } from '../services/api';
 declare global {
   interface Window {
     FaceDetection: any;
+    FaceMesh: any;
   }
 }
 
@@ -14,6 +15,7 @@ const MEDIAPIPE_LOCATE_FILE = (file: string): string => {
 };
 
 let globalFaceDetectionInstance: any = null;
+let globalFaceMeshInstance: any = null;
 
 interface User {
   id: string;
@@ -29,6 +31,9 @@ interface FaceDetectionResult {
 export const UserIdentification: React.FC<{ onUserIdentified: (user: User, members: User[], stream?: MediaStream | null) => void }> = ({ onUserIdentified }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceDetectionRef = useRef<any>(null);
+  const faceMeshRef = useRef<any>(null);
+  const meshEmbeddingRef = useRef<number[] | null>(null);
+  const isProcessingMeshRef = useRef(false);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const frameCountRef = useRef(0);
@@ -288,6 +293,22 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     }, detections[0]);
   };
 
+  // 468 landmarks de FaceMesh -> embedding denso invariante a posición y escala.
+  // Mucho más discriminativo que el geométrico (bbox+keypoints ~10 dims).
+  const landmarksToEmbedding = (landmarks: any[]): number[] => {
+    if (!landmarks || landmarks.length < 400) return [];
+    let cx = 0, cy = 0;
+    for (const p of landmarks) { cx += p.x; cy += p.y; }
+    cx /= landmarks.length; cy /= landmarks.length;
+    // Escala = distancia RMS al centroide (invariante a zoom/posición)
+    let scale = 0;
+    for (const p of landmarks) { scale += (p.x - cx) ** 2 + (p.y - cy) ** 2; }
+    scale = Math.sqrt(scale / landmarks.length) || 1e-6;
+    const emb: number[] = [];
+    for (const p of landmarks) { emb.push((p.x - cx) / scale, (p.y - cy) / scale); }
+    return emb;
+  };
+
   const extractEmbedding = (detection: any): number[] => {
     if (!detection) return [];
     const embedding: number[] = [];
@@ -390,13 +411,17 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
 
       const embedding = extractEmbedding(largest);
       if (embedding.length > 0) {
-        lastEmbeddingRef.current = embedding;
+        // Preferir el embedding denso de FaceMesh (936 dims); el geométrico queda de fallback
+        const best = meshEmbeddingRef.current && meshEmbeddingRef.current.length > 0
+          ? meshEmbeddingRef.current
+          : embedding;
+        lastEmbeddingRef.current = best;
         setFaceStableCount(prev => {
           const newCount = prev + 1;
           if (newCount >= 15 && !isDetectingRef.current) {
-            log('FACE', '15 frames estables -> ejecutando identificación');
+            log('FACE', '15 frames estables -> ejecutando identificación', { embeddingSource: meshEmbeddingRef.current ? 'facemesh' : 'geometric' });
             isDetectingRef.current = true;
-            identifyUser(embedding);
+            identifyUser(best);
           }
           return newCount;
         });
@@ -568,6 +593,14 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         faceDetectionRef.current = null;
         globalFaceDetectionInstance = null;
       }
+      if (faceMeshRef.current) {
+        try {
+          faceMeshRef.current.close();
+        } catch (e) {}
+        faceMeshRef.current = null;
+        globalFaceMeshInstance = null;
+        meshEmbeddingRef.current = null;
+      }
       if (hasTransitionedRef.current) {
         console.log('🔄 [UserIdentification cleanup]: cámara ya pasó a Workout, no detener tracks.');
       } else {
@@ -617,6 +650,34 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         }
         globalFaceDetectionInstance.onResults((results: any) => onFaceDetectionResults(results));
         faceDetectionRef.current = globalFaceDetectionInstance;
+
+        // FaceMesh: assets locales en public/mediapipe (sin dependencia de CDN)
+        try {
+          await loadScript('mediapipe/face_mesh.js');
+          if (typeof window.FaceMesh !== 'undefined') {
+            if (!globalFaceMeshInstance) {
+              const tMesh = performance.now();
+              globalFaceMeshInstance = new window.FaceMesh({ locateFile: (f: string) => `mediapipe/${f}` });
+              globalFaceMeshInstance.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5 });
+              await globalFaceMeshInstance.initialize();
+              log('INIT', 'Modelo FaceMesh inicializado', { elapsed_ms: Math.round(performance.now() - tMesh) });
+            }
+            // onResults se reasigna en cada mount: el ref pertenece a esta instancia del componente
+            globalFaceMeshInstance.onResults((res: any) => {
+              const lms = res.multiFaceLandmarks?.[0];
+              if (lms) {
+                const emb = landmarksToEmbedding(lms);
+                if (emb.length > 0) meshEmbeddingRef.current = emb;
+              }
+            });
+            faceMeshRef.current = globalFaceMeshInstance;
+          } else {
+            log('INIT', 'FaceMesh no disponible -> fallback a embedding geométrico');
+          }
+        } catch (meshErr) {
+          log('INIT', 'FaceMesh falló; se continúa con embedding geométrico', { error: String(meshErr) });
+        }
+
         isInitializedRef.current = true;
 
         // Solicitamos el stream de cámara una sola vez y lo pasaremos a Workout sin recargarlo
@@ -653,6 +714,19 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
             } finally {
               isProcessingFrameRef.current = false;
             }
+          }
+          // FaceMesh a menor frecuencia (cada 6 frames): solo alimenta el snapshot del embedding
+          if (
+            frameCountRef.current % 6 === 0 &&
+            faceMeshRef.current &&
+            !isProcessingMeshRef.current &&
+            videoRef.current &&
+            videoRef.current.readyState >= 2
+          ) {
+            isProcessingMeshRef.current = true;
+            faceMeshRef.current.send({ image: videoRef.current })
+              .catch(() => {})
+              .finally(() => { isProcessingMeshRef.current = false; });
           }
           rafRef.current = requestAnimationFrame(loop);
         };

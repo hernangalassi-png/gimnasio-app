@@ -82,6 +82,11 @@ def identify_user(user_data: UserIdentify, db: Session = Depends(get_db)):
     for user in users:
         if user.face_embedding:
             user_embedding = np.array(user.face_embedding)
+            # Guard de dims: embeddings legacy (geométricos ~10) vs FaceMesh (~936)
+            # no son comparables; np.dot lanzaría excepción de shape
+            if user_embedding.shape != target_embedding.shape:
+                log("IDENTIFY", "Embedding con dims distintas, omitido", {"user": user.name, "stored_dims": int(user_embedding.size), "target_dims": int(target_embedding.size)})
+                continue
             # Cosine similarity
             similarity = np.dot(target_embedding, user_embedding) / (
                 np.linalg.norm(target_embedding) * np.linalg.norm(user_embedding)
