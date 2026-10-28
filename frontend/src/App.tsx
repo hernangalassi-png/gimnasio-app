@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Workout } from './components/Workout';
 import { UserIdentification } from './components/UserIdentification';
+import { LogPanel } from './components/LogPanel';
 import { log } from './services/api';
 
 interface User {
@@ -48,6 +49,7 @@ function App() {
           </button>
         </div>
       )}
+      <LogPanel />
     </>
   );
 }

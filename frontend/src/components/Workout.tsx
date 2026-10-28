@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { processPoseFrame, getEquipment, getRecommendedRoutines, startWorkoutSession, logWorkoutSet, endWorkoutSession, log, type Equipment, type Exercise } from '../services/api';
 import { LiveVoiceClient, type LiveToolCall } from '../services/liveVoice';
+import { applySpanishVoice } from '../services/tts';
 import { Camera, Volume2, HelpCircle, X, Mic } from 'lucide-react';
 
 interface User {
@@ -94,7 +95,7 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
       window.speechSynthesis.cancel();
       isSpeakingRef.current = true;
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'es-ES';
+      applySpanishVoice(utterance);
       utterance.rate = 1;
       utterance.onstart = () => setIsSpeaking(true);
       utterance.onend = () => {

@@ -1,12 +1,35 @@
 import axios from 'axios';
 
-// Logger con timestamp para trazar la secuencia completa de la app
+// Logger con timestamp para trazar la secuencia completa de la app.
+// También alimenta un buffer interno que el LogPanel puede pausar/copiar.
+const LOG_BUFFER_MAX = 800;
+const logBuffer: string[] = [];
+export const logPaused = { current: false };
+
 export const log = (tag: string, msg: string, data?: unknown) => {
   const ts = new Date().toISOString();
+  if (!logPaused.current) {
+    const line = data !== undefined
+      ? `[${ts}] [${tag}] ${msg} ${JSON.stringify(data)}`
+      : `[${ts}] [${tag}] ${msg}`;
+    logBuffer.push(line);
+    if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.splice(0, logBuffer.length - LOG_BUFFER_MAX);
+  }
   if (data !== undefined) {
     console.log(`[${ts}] [${tag}] ${msg}`, data);
   } else {
     console.log(`[${ts}] [${tag}] ${msg}`);
+  }
+};
+
+export const getLogBuffer = (): string[] => logBuffer;
+export const clearLogBuffer = () => { logBuffer.length = 0; };
+export const copyLogBuffer = async (): Promise<boolean> => {
+  try {
+    await navigator.clipboard.writeText(logBuffer.join('\n'));
+    return true;
+  } catch {
+    return false;
   }
 };
 

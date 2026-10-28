@@ -30,6 +30,9 @@ export class LiveVoiceClient {
   private nextPlayTime = 0;
   private playSources: AudioBufferSourceNode[] = [];
   private speakingTimer: ReturnType<typeof setTimeout> | null = null;
+  // Half-duplex: mientras GALIA habla, no subir audio del mic (evita eco de parlante)
+  private modelSpeaking = false;
+  private modelMuteTimer: ReturnType<typeof setTimeout> | null = null;
   private callbacks: LiveCallbacks = {};
   private stopped = false;
 
@@ -50,7 +53,7 @@ export class LiveVoiceClient {
     try {
       // Mic a 16kHz mono: formato nativo de entrada de Live API
       this.micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true },
+        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: false,
       });
     } catch (e) {
@@ -108,6 +111,7 @@ export class LiveVoiceClient {
     this.workletNode = new AudioWorkletNode(this.captureCtx, 'pcm-capture');
     this.workletNode.port.onmessage = (ev) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      if (this.modelSpeaking) return; // GALIA hablando: no subir el eco del parlante
       const b64 = btoa(String.fromCharCode(...new Uint8Array(ev.data)));
       this.ws.send(JSON.stringify({ type: 'audio', data: b64 }));
     };
@@ -171,12 +175,20 @@ export class LiveVoiceClient {
     this.callbacks.onSpeaking?.(true);
     if (this.speakingTimer) clearTimeout(this.speakingTimer);
     this.speakingTimer = setTimeout(() => this.callbacks.onSpeaking?.(false), 400);
+
+    // Mantener el mic muteado hasta que la cola de reproducción drene (+150ms)
+    this.modelSpeaking = true;
+    if (this.modelMuteTimer) clearTimeout(this.modelMuteTimer);
+    const unmuteInMs = Math.max(150, (this.nextPlayTime - now) * 1000 + 150);
+    this.modelMuteTimer = setTimeout(() => { this.modelSpeaking = false; }, unmuteInMs);
   }
 
   private clearPlayback() {
     this.playSources.forEach((s) => { try { s.stop(); } catch {} });
     this.playSources = [];
     this.nextPlayTime = 0;
+    this.modelSpeaking = false;
+    if (this.modelMuteTimer) { clearTimeout(this.modelMuteTimer); this.modelMuteTimer = null; }
     this.callbacks.onSpeaking?.(false);
   }
 

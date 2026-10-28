@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Mic, MicOff } from 'lucide-react';
 import { InstructorAvatar, type AvatarState } from './InstructorAvatar';
 import { api, log } from '../services/api';
+import { applySpanishVoice } from '../services/tts';
 
 declare global {
   interface Window {
@@ -113,16 +114,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       stopListening();
 
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'es-AR';
-      // Preferir voces rioplatenses/latinoamericanas si el dispositivo las tiene
-      const voices = window.speechSynthesis.getVoices();
-      const preferred = voices.find(v => /^es-(AR|UY|PY)/i.test(v.lang))
-        || voices.find(v => /^es-(419|MX|US|CO|CL)/i.test(v.lang))
-        || voices.find(v => /^es/i.test(v.lang));
-      if (preferred) {
-        utterance.voice = preferred;
-        utterance.lang = preferred.lang;
-      }
+      const chosenVoice = applySpanishVoice(utterance);
+      log('TTS', 'Voz seleccionada', { name: chosenVoice?.name, lang: chosenVoice?.lang });
       utterance.rate = 1;
       utterance.pitch = 1;
 
@@ -503,8 +496,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       if (isAffirmative && hasMember) {
         const user = selectedMemberRef.current || membersRef.current[membersRef.current.length - 1];
         log('VOICE', 'Confirmación afirmativa -> iniciando rutina', { user: user?.name });
-        speak(`Perfecto${user?.name ? ' ' + user.name : ''}. Iniciando tu rutina.`);
-        setTimeout(() => handleStartWorkoutForSelected(), 1200);
+        speak(`Perfecto${user?.name ? ' ' + user.name : ''}. Iniciando tu rutina.`, () => handleStartWorkoutForSelected());
+        // Si el TTS quedó bloqueado por autoplay, transicionar igual a los 4s
+        setTimeout(() => { if (!hasTransitionedRef.current) handleStartWorkoutForSelected(); }, 4000);
       } else if (isNegative && hasMember) {
         log('VOICE', 'Respuesta negativa -> agregar otro integrante');
         handleAddAnother();
@@ -984,7 +978,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
             {showButtons && registrationStep === 'idle' && (
               <div className="flex space-x-3 w-full">
                 <button
-                  onClick={() => { speak(`Perfecto. Iniciando tu rutina.`, () => {}); setTimeout(() => handleStartWorkoutForSelected(), 1200); }}
+                  onClick={() => { speak(`Perfecto. Iniciando tu rutina.`, () => handleStartWorkoutForSelected()); setTimeout(() => { if (!hasTransitionedRef.current) handleStartWorkoutForSelected(); }, 4000); }}
                   className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
                 >
                   Sí, iniciar rutina
