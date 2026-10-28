@@ -50,6 +50,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const [message, setMessage] = useState<string>('Cargando sistema...');
   const [showButtons, setShowButtons] = useState(false);
   const [faceStableCount, setFaceStableCount] = useState(0);
+  // Resultado explícito del reconocimiento facial para el icono rostro
+  const [faceIconResult, setFaceIconResult] = useState<'success' | 'error' | null>(null);
 
   // Refs espejo para evitar closures stale en callbacks de voz/MediaPipe
   const showButtonsRef = useRef(false);
@@ -369,12 +371,15 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       log('IDENTIFY', 'Respuesta recibida', { identified: response.data.identified, user: response.data.user?.name, elapsed_ms: Math.round(performance.now() - t0) });
 
       if (response.data.identified && response.data.user) {
+        setFaceIconResult('success');
         updateCurrentUser(response.data.user);
         addMember(response.data.user);
         setMode('members');
         speak(`Hola ${response.data.user.name}. ¿Deseas iniciar tu rutina?`);
         setMessage(`Hola ${response.data.user.name}`);
       } else {
+        setFaceIconResult('error');
+        setTimeout(() => setFaceIconResult(null), 1800);
         log('IDENTIFY', 'Usuario no reconocido -> iniciando registro por voz');
         isDetectingRef.current = true;
         updateRegistrationStep('asking_name');
@@ -385,8 +390,10 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       }
     } catch (error: any) {
       log('IDENTIFY', 'Error de conexión', { message: error?.message, elapsed_ms: Math.round(performance.now() - t0) });
+      setFaceIconResult('error');
       setMessage('Error de conexión.');
       setTimeout(() => {
+          setFaceIconResult(null);
           isDetectingRef.current = false;
           setFaceStableCount(0);
       }, 3000);
@@ -523,6 +530,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       });
       
       log('REGISTER', 'Usuario registrado', { id: response.data.id, name: response.data.name });
+      setFaceIconResult('success');
       updateCurrentUser(response.data);
       addMember(response.data);
       setMessage(`Bienvenido ${name}`);
@@ -553,6 +561,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     updateRegistrationStep('idle');
     isDetectingRef.current = false;
     setFaceStableCount(0);
+    setFaceIconResult(null);
     pendingNameRef.current = '';
     lastEmbeddingRef.current = null;
     setMode('detecting');
@@ -568,6 +577,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     updateRegistrationStep('idle');
     isDetectingRef.current = false;
     setFaceStableCount(0);
+    setFaceIconResult(null);
     pendingNameRef.current = '';
     lastEmbeddingRef.current = null;
     setMembers([]);
@@ -758,8 +768,38 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Icono rostro: scanning mientras hay cara estable o se consulta al backend;
+  // success/error vienen del resultado explícito del identify/register
+  const faceIconState: 'idle' | 'scanning' | 'success' | 'error' =
+    faceIconResult ?? (faceStableCount > 0 ? 'scanning' : 'idle');
+
   return (
     <div className="overlay-container">
+      <style>{`
+        .face-id-icon { color: rgba(255,255,255,0.35); transition: color .35s ease, filter .35s ease; }
+        .face-id-icon[data-state="scanning"] {
+          animation: faceIdHue 2.4s linear infinite;
+          filter: drop-shadow(0 0 14px currentColor);
+        }
+        .face-id-icon[data-state="success"] { color: #4ade80; filter: drop-shadow(0 0 18px rgba(74,222,128,0.85)); }
+        .face-id-icon[data-state="error"] { color: #f87171; filter: drop-shadow(0 0 18px rgba(248,113,113,0.85)); }
+        @keyframes faceIdHue {
+          0%   { color: #67e8f9; }
+          25%  { color: #60a5fa; }
+          50%  { color: #a78bfa; }
+          75%  { color: #38bdf8; }
+          100% { color: #67e8f9; }
+        }
+        .face-id-scanline {
+          position: absolute; left: 14%; right: 14%; height: 2px; border-radius: 2px;
+          background: linear-gradient(90deg, transparent, currentColor, transparent);
+          animation: faceIdScan 1.9s ease-in-out infinite;
+        }
+        @keyframes faceIdScan {
+          0%, 100% { top: 16%; opacity: 0.25; }
+          50%      { top: 80%; opacity: 1; }
+        }
+      `}</style>
       {/* Cámara a pantalla completa */}
       <video
         ref={videoRef}
@@ -778,6 +818,33 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
               ? `Detectando rostro... ${Math.min(faceStableCount, 60)}/60`
               : 'Esperando detección facial...'}
           </p>
+        </div>
+      </div>
+
+      {/* Icono rostro estilo FaceID: guía de posición + estado del reconocimiento */}
+      <div className="absolute top-[26%] left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+        <div className="face-id-icon relative w-28 h-28" data-state={faceIconState}>
+          <svg viewBox="0 0 96 96" fill="none" className="w-full h-full">
+            {/* Esquinas tipo viewfinder */}
+            <path d="M8 24V12a4 4 0 0 1 4-4h12" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            <path d="M72 8h12a4 4 0 0 1 4 4v12" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            <path d="M88 72v12a4 4 0 0 1-4 4H72" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            <path d="M24 88H12a4 4 0 0 1-4-4V72" stroke="currentColor" strokeWidth="3" strokeLinecap="round"/>
+            {/* Contorno del rostro */}
+            <ellipse cx="48" cy="50" rx="20" ry="24" stroke="currentColor" strokeWidth="3"/>
+            {/* Ojos */}
+            <circle cx="41" cy="44" r="2.6" fill="currentColor"/>
+            <circle cx="55" cy="44" r="2.6" fill="currentColor"/>
+            {/* Nariz */}
+            <path d="M48 46v9c0 1.5-1 2.5-2.5 2.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"/>
+            {/* Boca */}
+            <path d="M41 63c2.5 3 11.5 3 14 0" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round"/>
+            {/* Check de éxito */}
+            {faceIconState === 'success' && (
+              <path d="M38 50l7 7 14-16" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+            )}
+          </svg>
+          {faceIconState === 'scanning' && <div className="face-id-scanline" />}
         </div>
       </div>
 
