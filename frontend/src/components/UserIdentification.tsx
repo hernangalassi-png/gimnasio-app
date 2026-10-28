@@ -37,6 +37,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const frameCountRef = useRef(0);
+  const meshWaitStartRef = useRef(0);
   const isProcessingFrameRef = useRef(false);
   const hasTransitionedRef = useRef(false);
   const isInitializedRef = useRef(false);
@@ -426,7 +427,21 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         setFaceStableCount(prev => {
           const newCount = prev + 1;
           if (newCount >= 15 && !isDetectingRef.current) {
-            log('FACE', '15 frames estables -> ejecutando identificación', { embeddingSource: meshEmbeddingRef.current ? 'facemesh' : 'geometric' });
+            const hasMeshEmb = !!(meshEmbeddingRef.current && meshEmbeddingRef.current.length > 0);
+            if (faceMeshRef.current && !hasMeshEmb) {
+              // FaceMesh aún no entregó su primer resultado (warm-up wasm ~2-3s):
+              // esperar hasta 2.5s antes de caer al embedding geométrico, que casi
+              // nunca matchea contra los vectores de 936 dims almacenados.
+              if (!meshWaitStartRef.current) meshWaitStartRef.current = performance.now();
+              const waited = performance.now() - meshWaitStartRef.current;
+              if (waited < 2500) {
+                log('FACE', 'Esperando primer embedding FaceMesh', { waited_ms: Math.round(waited) });
+                return newCount - 1; // mantener en 14 hasta que llegue el mesh o venza el timeout
+              }
+              log('FACE', 'Timeout esperando FaceMesh -> fallback geométrico');
+            }
+            meshWaitStartRef.current = 0;
+            log('FACE', '15 frames estables -> ejecutando identificación', { embeddingSource: hasMeshEmb ? 'facemesh' : 'geometric' });
             isDetectingRef.current = true;
             identifyUser(best);
           }
@@ -436,6 +451,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     } else {
       setFaceStableCount(0);
       lastEmbeddingRef.current = null;
+      meshEmbeddingRef.current = null; // snapshot stale: la cara salió de cuadro
+      meshWaitStartRef.current = 0;
     }
   }, [identifyUser]);
 
@@ -564,6 +581,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     setFaceIconResult(null);
     pendingNameRef.current = '';
     lastEmbeddingRef.current = null;
+    meshEmbeddingRef.current = null;
+    meshWaitStartRef.current = 0;
     setMode('detecting');
     setMessage('Colócate frente a la cámara para agregar otro integrante');
     speak('Colócate frente a la cámara para agregar otro integrante.', () => {});
@@ -580,6 +599,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     setFaceIconResult(null);
     pendingNameRef.current = '';
     lastEmbeddingRef.current = null;
+    meshEmbeddingRef.current = null;
+    meshWaitStartRef.current = 0;
     setMembers([]);
     setSelectedMember(null);
     membersRef.current = [];
@@ -677,7 +698,10 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
               const lms = res.multiFaceLandmarks?.[0];
               if (lms) {
                 const emb = landmarksToEmbedding(lms);
-                if (emb.length > 0) meshEmbeddingRef.current = emb;
+                if (emb.length > 0) {
+                  if (!meshEmbeddingRef.current) log('MESH', 'Primer embedding FaceMesh recibido', { dims: emb.length });
+                  meshEmbeddingRef.current = emb;
+                }
               }
             });
             faceMeshRef.current = globalFaceMeshInstance;
@@ -735,7 +759,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
           ) {
             isProcessingMeshRef.current = true;
             faceMeshRef.current.send({ image: videoRef.current })
-              .catch(() => {})
+              .catch((e: any) => { log('MESH', 'send error', { error: String(e) }); })
               .finally(() => { isProcessingMeshRef.current = false; });
           }
           rafRef.current = requestAnimationFrame(loop);
