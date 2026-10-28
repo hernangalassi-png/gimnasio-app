@@ -316,6 +316,12 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     scale = Math.sqrt(scale / landmarks.length) || 1e-6;
     const emb: number[] = [];
     for (const p of landmarks) { emb.push((p.x - cx) / scale, (p.y - cy) / scale); }
+    // NaN/Infinity en landmarks marginales -> null en JSON -> 422 del backend.
+    // Descartar el frame: la próxima entrega de FaceMesh llega ~130ms después.
+    if (!emb.every(Number.isFinite)) {
+      log('MESH', 'Embedding con valores no finitos, descartado');
+      return [];
+    }
     return emb;
   };
 
@@ -397,7 +403,12 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         setMessage('Dime tu nombre...');
       }
     } catch (error: any) {
-      log('IDENTIFY', 'Error de conexión', { message: error?.message, elapsed_ms: Math.round(performance.now() - t0) });
+      log('IDENTIFY', 'Error de conexión', {
+        message: error?.message,
+        status: error?.response?.status,
+        detail: JSON.stringify(error?.response?.data?.detail)?.slice(0, 200),
+        elapsed_ms: Math.round(performance.now() - t0)
+      });
       setFaceIconResult('error');
       setMessage('Error de conexión.');
       setTimeout(() => {
