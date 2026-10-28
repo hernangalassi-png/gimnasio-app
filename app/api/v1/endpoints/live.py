@@ -133,8 +133,32 @@ async def live_ws(websocket: WebSocket):
 
     config = types.LiveConnectConfig(**config_kwargs)
 
-    try:
-        async with client.aio.live.connect(model=settings.LIVE_MODEL, config=config) as session:
+    # Reintentar sin speech_config si el connect con voz falla: el servidor Live
+    # puede rechazar la config aunque el SDK local la haya parseado bien.
+    configs = [config]
+    if "speech_config" in config_kwargs:
+        fallback_kwargs = dict(config_kwargs)
+        fallback_kwargs.pop("speech_config", None)
+        configs.append(types.LiveConnectConfig(**fallback_kwargs))
+
+    session_cm = None
+    session = None
+    for i, cfg in enumerate(configs):
+        try:
+            cm = client.aio.live.connect(model=settings.LIVE_MODEL, config=cfg)
+            session = await cm.__aenter__()
+            session_cm = cm
+            if i > 0:
+                log("LIVE", "Conectado sin speech_config (fallback voz default)")
+            break
+        except Exception as e:
+            log("LIVE", "Connect Live falló", {"attempt": i, "error": str(e)[:300]})
+            if i == len(configs) - 1:
+                await websocket.send_json({"type": "error", "detail": f"No se pudo conectar a Live: {e}"})
+                await websocket.close(code=1011)
+                return
+
+    async def _run_session():
             log("LIVE", "Sesión Live conectada", {"model": settings.LIVE_MODEL})
             await websocket.send_json({"type": "ready", "model": settings.LIVE_MODEL})
 
@@ -228,12 +252,21 @@ async def live_ws(websocket: WebSocket):
             for task in done:
                 if task.exception():
                     log("LIVE", "Tarea terminó con error", {"error": str(task.exception())})
+
+    try:
+        await _run_session()
     except WebSocketDisconnect:
-        log("LIVE", "WS cliente desconectado durante handshake")
+        log("LIVE", "WS cliente desconectado durante sesión Live")
     except Exception as e:
-        log("LIVE", "Error abriendo sesión Live", {"error": str(e)})
+        log("LIVE", "Error en sesión Live", {"error": str(e)})
         try:
-            await websocket.send_json({"type": "error", "detail": f"No se pudo conectar a Live: {e}"})
+            await websocket.send_json({"type": "error", "detail": f"Error en sesión Live: {e}"})
             await websocket.close(code=1011)
         except Exception:
             pass
+    finally:
+        if session_cm is not None:
+            try:
+                await session_cm.__aexit__(None, None, None)
+            except Exception:
+                pass

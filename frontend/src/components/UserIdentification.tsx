@@ -45,6 +45,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const resultsCountRef = useRef(0);
   const missesRef = useRef(0);
   const meshFirstResultLoggedRef = useRef(false);
+  const meshBadLandmarksLoggedRef = useRef(false);
   const isProcessingFrameRef = useRef(false);
   const hasTransitionedRef = useRef(false);
   const isInitializedRef = useRef(false);
@@ -308,20 +309,33 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   // Mucho más discriminativo que el geométrico (bbox+keypoints ~10 dims).
   const landmarksToEmbedding = (landmarks: any[]): number[] => {
     if (!landmarks || landmarks.length < 400) return [];
-    let cx = 0, cy = 0;
-    for (const p of landmarks) { cx += p.x; cy += p.y; }
-    cx /= landmarks.length; cy /= landmarks.length;
+    // En algunos devices/builds wasm, ciertos landmarks llegan NaN/Infinity en
+    // CADA frame. Se imputan al centroide (0 post-normalización) en vez de
+    // descartar todo el vector: la señal de identidad queda casi intacta.
+    let cx = 0, cy = 0, good = 0, bad = 0;
+    for (const p of landmarks) {
+      if (Number.isFinite(p.x) && Number.isFinite(p.y)) { cx += p.x; cy += p.y; good++; }
+      else bad++;
+    }
+    if (good < 400) {
+      log('MESH', 'Demasiados landmarks inválidos, descartado', { good, bad });
+      return [];
+    }
+    if (bad > 0 && !meshBadLandmarksLoggedRef.current) {
+      meshBadLandmarksLoggedRef.current = true;
+      log('MESH', 'Landmarks no finitos -> imputados al centroide', { bad, total: landmarks.length });
+    }
+    cx /= good; cy /= good;
     // Escala = distancia RMS al centroide (invariante a zoom/posición)
     let scale = 0;
-    for (const p of landmarks) { scale += (p.x - cx) ** 2 + (p.y - cy) ** 2; }
-    scale = Math.sqrt(scale / landmarks.length) || 1e-6;
+    for (const p of landmarks) {
+      if (Number.isFinite(p.x) && Number.isFinite(p.y)) scale += (p.x - cx) ** 2 + (p.y - cy) ** 2;
+    }
+    scale = Math.sqrt(scale / good) || 1e-6;
     const emb: number[] = [];
-    for (const p of landmarks) { emb.push((p.x - cx) / scale, (p.y - cy) / scale); }
-    // NaN/Infinity en landmarks marginales -> null en JSON -> 422 del backend.
-    // Descartar el frame: la próxima entrega de FaceMesh llega ~130ms después.
-    if (!emb.every(Number.isFinite)) {
-      log('MESH', 'Embedding con valores no finitos, descartado');
-      return [];
+    for (const p of landmarks) {
+      const ok = Number.isFinite(p.x) && Number.isFinite(p.y);
+      emb.push(ok ? (p.x - cx) / scale : 0, ok ? (p.y - cy) / scale : 0);
     }
     return emb;
   };
