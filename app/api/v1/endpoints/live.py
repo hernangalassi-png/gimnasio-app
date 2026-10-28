@@ -106,15 +106,8 @@ async def live_ws(websocket: WebSocket):
         http_options={"api_version": "v1alpha"},
     )
 
-    config = types.LiveConnectConfig(
+    config_kwargs: dict = dict(
         response_modalities=["AUDIO"],
-        speech_config=types.SpeechConfig(
-            voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                    voice_name=settings.LIVE_VOICE,
-                )
-            )
-        ),
         system_instruction=SYSTEM_INSTRUCTION,
         tools=LIVE_TOOLS,
         output_audio_transcription=types.AudioTranscriptionConfig(),
@@ -124,6 +117,21 @@ async def live_ws(websocket: WebSocket):
             sliding_window=types.SlidingWindow(target_tokens=12800),
         ),
     )
+
+    # speech_config es opcional: si el SDK instalado no soporta estas clases,
+    # la sesión Live debe seguir funcionando con la voz default.
+    try:
+        config_kwargs["speech_config"] = types.SpeechConfig(
+            voice_config=types.VoiceConfig(
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                    voice_name=settings.LIVE_VOICE,
+                )
+            )
+        )
+    except Exception as e:
+        log("LIVE", "speech_config no soportado por el SDK, usando voz default", {"error": str(e)})
+
+    config = types.LiveConnectConfig(**config_kwargs)
 
     try:
         async with client.aio.live.connect(model=settings.LIVE_MODEL, config=config) as session:

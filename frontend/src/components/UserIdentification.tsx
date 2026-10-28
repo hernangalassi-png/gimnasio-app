@@ -44,6 +44,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const lastDeliveryMsRef = useRef(0);
   const resultsCountRef = useRef(0);
   const missesRef = useRef(0);
+  const meshFirstResultLoggedRef = useRef(false);
   const isProcessingFrameRef = useRef(false);
   const hasTransitionedRef = useRef(false);
   const isInitializedRef = useRef(false);
@@ -462,10 +463,12 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
             // FaceMesh aún no entregó su primer resultado (warm-up wasm ~2-3s):
             // esperar hasta 2.5s antes de caer al embedding geométrico, que casi
             // nunca matchea contra los vectores de 936 dims almacenados.
-            if (!meshWaitStartRef.current) meshWaitStartRef.current = performance.now();
+            if (!meshWaitStartRef.current) {
+              meshWaitStartRef.current = performance.now();
+              log('FACE', 'Esperando primer embedding FaceMesh');
+            }
             const waited = performance.now() - meshWaitStartRef.current;
-            if (waited < 2500) {
-              log('FACE', 'Esperando primer embedding FaceMesh', { waited_ms: Math.round(waited) });
+            if (waited < 1500) {
               stableFramesRef.current -= 1; // mantener en 14 hasta el mesh o el timeout
               setFaceStableCount(stableFramesRef.current);
               return;
@@ -737,6 +740,10 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
             // onResults se reasigna en cada mount: el ref pertenece a esta instancia del componente
             globalFaceMeshInstance.onResults((res: any) => {
               const lms = res.multiFaceLandmarks?.[0];
+              if (!meshFirstResultLoggedRef.current) {
+                meshFirstResultLoggedRef.current = true;
+                log('MESH', 'Primer resultado FaceMesh', { hasLandmarks: !!lms, faces: res.multiFaceLandmarks?.length ?? 0 });
+              }
               if (lms) {
                 const emb = landmarksToEmbedding(lms);
                 if (emb.length > 0) {
@@ -799,9 +806,22 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
             videoRef.current.readyState >= 2
           ) {
             isProcessingMeshRef.current = true;
+            // Watchdog: si send() cuelga sin resolver, liberar el lock a los 1.5s
+            let released = false;
+            const release = () => {
+              if (released) return;
+              released = true;
+              isProcessingMeshRef.current = false;
+            };
             faceMeshRef.current.send({ image: videoRef.current })
               .catch((e: any) => { log('MESH', 'send error', { error: String(e) }); })
-              .finally(() => { isProcessingMeshRef.current = false; });
+              .finally(release);
+            setTimeout(() => {
+              if (!released) {
+                log('MESH', 'send timeout -> liberando lock');
+                release();
+              }
+            }, 1500);
           }
           rafRef.current = requestAnimationFrame(loop);
         };
