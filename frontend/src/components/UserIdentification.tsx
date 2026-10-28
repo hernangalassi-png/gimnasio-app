@@ -329,9 +329,21 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       setMessage('Identificando rostro...');
       setAvatarState('listening');
 
-      const response = await api.post<FaceDetectionResult>('/users/identify', payload, {
-        timeout: 60000
-      });
+      const doIdentify = () => api.post<FaceDetectionResult>('/users/identify', payload, { timeout: 60000 });
+
+      // Cold start de Render puede colgar la primera request: reintentamos una vez
+      // ante errores de red (sin respuesta) o 5xx transitorios.
+      const isRetryable = (err: any) => !err.response || (err.response.status >= 500 && err.response.status < 600);
+      let response;
+      try {
+        response = await doIdentify();
+      } catch (firstErr: any) {
+        if (!isRetryable(firstErr)) throw firstErr;
+        log('IDENTIFY', 'Fallo retryable (posible cold start), reintentando en 3s', { message: firstErr?.message });
+        setMessage('Despertando el servidor, un momento...');
+        await new Promise(r => setTimeout(r, 3000));
+        response = await doIdentify();
+      }
 
       log('IDENTIFY', 'Respuesta recibida', { identified: response.data.identified, user: response.data.user?.name, elapsed_ms: Math.round(performance.now() - t0) });
 

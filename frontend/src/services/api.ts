@@ -151,6 +151,16 @@ export interface LogSetPayload {
   rpe_reported?: number | null;
 }
 
+// Despierta el backend (Render free-tier cold start ~50-60s).
+// Debe llamarse lo antes posible en el boot de la app, sin await.
+export const warmUpBackend = () => {
+  const t0 = performance.now();
+  // /health vive en la raíz del API, fuera de /api/v1 -> ping directo
+  fetch(`${API_URL.replace(/\/api\/v1$/, '')}/health`, { method: 'GET', mode: 'cors' })
+    .then(r => log('WARMUP', 'Backend despierto', { status: r.status, elapsed_ms: Math.round(performance.now() - t0) }))
+    .catch(e => log('WARMUP', 'Warm-up ping falló (se reintenta al primer request real)', { error: String(e) }));
+};
+
 export const startWorkoutSession = async (userIds: string[]): Promise<WorkoutSession> => {
   const response = await api.post('/sessions/start', { user_ids: userIds });
   return response.data;
