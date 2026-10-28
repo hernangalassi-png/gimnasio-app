@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { processPoseFrame, getEquipment, getRecommendedRoutines, startWorkoutSession, logWorkoutSet, endWorkoutSession, log, type Equipment, type Exercise } from '../services/api';
+import { LiveVoiceClient, type LiveToolCall } from '../services/liveVoice';
 import { Camera, Volume2, HelpCircle, X, Mic } from 'lucide-react';
 
 interface User {
@@ -71,13 +72,19 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
   const pendingProposalRef = useRef<{
     id: string;
     action: 'change_exercise' | 'end_workout';
-    payload: { rec?: Exercise };
+    payload: { rec?: Exercise; toolCallId?: string; toolCallName?: string };
     question: string;
     expiresAt: number;
   } | null>(null);
   const proposalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pendingProposalUI, setPendingProposalUI] = useState<string | null>(null);
   const repsDisplayRef = useRef(0);
+
+  // ---- Canal Gemini Live (voz natural); fallback: SpeechRecognition + regex ----
+  const liveClientRef = useRef<LiveVoiceClient | null>(null);
+  const liveActiveRef = useRef(false);
+  const liveToolHandlerRef = useRef<(c: LiveToolCall) => void>(() => {});
+  const [liveConnected, setLiveConnected] = useState(false);
 
   const setExercise = (ex: string) => { setExerciseState(ex); exerciseRef.current = ex; };
 
@@ -144,6 +151,7 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
     setSelectedTitle(rec.title);
     activeExerciseIdRef.current = rec.id;
     speak(announce || `Cambiamos a ${rec.title}.`);
+    liveClientRef.current?.sendContext(`El usuario cambió al ejercicio ${rec.title} (tipo ${rec.exercise_type}). El contador de repeticiones volvió a 0.`);
   }, [flushPendingSet, speak]);
 
   // ---- Máquina de propuestas: ningún comando mutador por voz ejecuta sin confirmación ----
@@ -156,7 +164,7 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
     setPendingProposalUI(null);
   }, []);
 
-  const proposeAction = useCallback((p: { id: string; action: 'change_exercise' | 'end_workout'; payload: { rec?: Exercise }; question: string }) => {
+  const proposeAction = useCallback((p: { id: string; action: 'change_exercise' | 'end_workout'; payload: { rec?: Exercise; toolCallId?: string; toolCallName?: string }; question: string }) => {
     clearProposal();
     pendingProposalRef.current = { ...p, expiresAt: Date.now() + 10000 };
     setPendingProposalUI(p.question);
@@ -173,6 +181,10 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
   // APPLIED: la propuesta solo se ejecuta tras confirmación explícita
   const applyProposal = useCallback((p: NonNullable<typeof pendingProposalRef.current>) => {
     log('GATE', 'Propuesta confirmada -> aplicando (APPLIED)', { action: p.action });
+    // Si vino de un tool call de Live, responder el resultado al modelo
+    if (p.payload.toolCallId && p.payload.toolCallName) {
+      liveClientRef.current?.sendToolResponse(p.payload.toolCallId, p.payload.toolCallName, { result: 'applied' });
+    }
     clearProposal();
     if (p.action === 'change_exercise' && p.payload.rec) {
       changeExercise(p.payload.rec, `Listo. Ahora hacemos ${p.payload.rec.title}.`);
@@ -182,12 +194,85 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
   }, [clearProposal, changeExercise, speak, onBack]);
 
   const cancelProposal = useCallback(() => {
-    if (pendingProposalRef.current) {
-      log('GATE', 'Propuesta cancelada (CANCELLED)', { action: pendingProposalRef.current.action });
+    const p = pendingProposalRef.current;
+    if (p) {
+      log('GATE', 'Propuesta cancelada (CANCELLED)', { action: p.action });
+      if (p.payload.toolCallId && p.payload.toolCallName) {
+        liveClientRef.current?.sendToolResponse(p.payload.toolCallId, p.payload.toolCallName, { result: 'cancelled' });
+      }
     }
     clearProposal();
     speak('Cancelado.');
   }, [clearProposal, speak]);
+
+  // Árbitro de tool calls de Live: propuestas entran al gate; read-only ejecutan directo.
+  // La app valida TODO contra su estado local - el modelo solo propone.
+  const handleLiveToolCall = useCallback((call: LiveToolCall) => {
+    log('LIVE', 'Arbitrando tool call', { name: call.name, args: call.args });
+    const client = liveClientRef.current;
+
+    switch (call.name) {
+      case 'propose_change_exercise': {
+        const exType = call.args?.exercise_type as string | undefined;
+        const rec = recommendations.find(r => r.exercise_type === exType);
+        if (!rec || rec.exercise_type === exerciseRef.current) {
+          client?.sendToolResponse(call.id, call.name, { result: 'rejected', reason: 'ejercicio no disponible o ya activo' });
+          return;
+        }
+        proposeAction({
+          id: `live-${call.id}`,
+          action: 'change_exercise',
+          payload: { rec, toolCallId: call.id, toolCallName: call.name },
+          question: `¿Cambiamos a ${rec.title}? Decí sí para confirmar.`
+        });
+        // No respondemos todavía: la respuesta viaja al confirmar/cancelar/expirar
+        return;
+      }
+      case 'propose_end_workout': {
+        proposeAction({
+          id: `live-${call.id}`,
+          action: 'end_workout',
+          payload: { toolCallId: call.id, toolCallName: call.name },
+          question: '¿Terminamos la rutina? Decí sí para confirmar.'
+        });
+        return;
+      }
+      case 'confirm_pending_action': {
+        const pending = pendingProposalRef.current && Date.now() < pendingProposalRef.current.expiresAt
+          ? pendingProposalRef.current
+          : null;
+        if (pending) {
+          applyProposal(pending);
+          client?.sendToolResponse(call.id, call.name, { result: 'applied' });
+        } else {
+          client?.sendToolResponse(call.id, call.name, { result: 'rejected', reason: 'no hay propuesta pendiente o expiró' });
+        }
+        return;
+      }
+      case 'cancel_pending_action': {
+        const hadPending = !!pendingProposalRef.current;
+        cancelProposal();
+        client?.sendToolResponse(call.id, call.name, { result: hadPending ? 'cancelled' : 'nothing_pending' });
+        return;
+      }
+      case 'show_exercise_example': {
+        // Read-only: ejecución directa
+        showExerciseExample();
+        client?.sendToolResponse(call.id, call.name, { result: 'shown' });
+        return;
+      }
+      case 'get_rep_count': {
+        client?.sendToolResponse(call.id, call.name, { reps: repsDisplayRef.current, exercise: selectedTitle || exerciseRef.current });
+        return;
+      }
+      default:
+        log('LIVE', 'Tool call desconocido', { name: call.name });
+        client?.sendToolResponse(call.id, call.name, { result: 'rejected', reason: 'herramienta desconocida' });
+    }
+  }, [recommendations, proposeAction, applyProposal, cancelProposal, showExerciseExample, selectedTitle]);
+
+  // Ref espejo: el WS usa el handler más reciente sin re-registrar callbacks
+  useEffect(() => { liveToolHandlerRef.current = handleLiveToolCall; }, [handleLiveToolCall]);
 
   const findExerciseMention = useCallback((transcript: string): Exercise | undefined => {
     if (/sentadilla/.test(transcript)) return recommendations.find(r => r.exercise_type === 'squat');
@@ -256,7 +341,7 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
   const startListening = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
-    if (helpActiveRef.current || recognitionRef.current) return;
+    if (helpActiveRef.current || recognitionRef.current || liveActiveRef.current) return;
     if (isSpeakingRef.current) {
       // Reintentar cuando termine el TTS: la confirmación por voz necesita el mic activo
       if (activeRef.current) setTimeout(startListening, 800);
@@ -340,6 +425,35 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
         setAvailableEquipment(equipment);
         setRecommendations(routines);
 
+        // Canal Gemini Live: si conecta, la voz natural reemplaza al reconocedor regex
+        const live = new LiveVoiceClient();
+        live.setCallbacks({
+          onToolCall: (call) => liveToolHandlerRef.current(call),
+          onStatus: (s) => {
+            setLiveConnected(s === 'connected');
+            liveActiveRef.current = s === 'connected';
+          },
+          onSpeaking: (sp) => setIsSpeaking(sp),
+          onTranscript: (kind, text) => log('LIVE', 'Transcript', { kind, text: text.slice(0, 120) }),
+        });
+        live.connect().then(ok => {
+          if (!ok) {
+            log('LIVE', 'Live no disponible -> fallback a SpeechRecognition');
+            return;
+          }
+          liveClientRef.current = live;
+          // Detener el recognizer regex: Live es el canal de voz ahora
+          try {
+            if (recognitionRef.current) {
+              recognitionRef.current.onend = null;
+              recognitionRef.current.stop();
+              recognitionRef.current = null;
+            }
+          } catch {}
+          log('LIVE', 'Canal de voz natural activo');
+          live.sendContext(`El usuario ${user.name} comenzó su rutina con ${routines[0]?.title || 'el primer ejercicio'}. Ejercicios disponibles: ${routines.map(r => `${r.title} (tipo ${r.exercise_type})`).join(', ')}. Saludalo brevemente y avisale que puede pedirte cambiar de ejercicio, ver un ejemplo, o terminar la rutina.`);
+        });
+
         if (routines.length > 0) {
           const first = routines[0];
           setExercise(first.exercise_type);
@@ -374,6 +488,11 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
     return () => {
       if (timer) clearTimeout(timer);
       // Al desmontar: persistir serie pendiente y cerrar sesión (recibo APPLIED final)
+      if (liveClientRef.current) {
+        liveClientRef.current.disconnect();
+        liveClientRef.current = null;
+        liveActiveRef.current = false;
+      }
       if (sessionIdRef.current && !sessionEndedRef.current) {
         sessionEndedRef.current = true;
         const sid = sessionIdRef.current;
@@ -603,6 +722,14 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
           >
             <HelpCircle className="w-5 h-5" />
           </button>
+          {liveConnected && (
+            <span
+              title="GALIA Live conectada - canal de voz natural"
+              className="px-3 py-2.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-bold backdrop-blur-md"
+            >
+              GALIA
+            </span>
+          )}
           <button
             onClick={startListening}
             title="Activar micrófono"

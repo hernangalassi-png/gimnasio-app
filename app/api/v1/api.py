@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1.endpoints import users, equipment, exercises, routines, sessions, vision, voice, ai
+from app.api.v1.endpoints import users, equipment, exercises, routines, sessions, vision, voice, ai, live
 
 api_router = APIRouter()
 
@@ -11,3 +11,4 @@ api_router.include_router(sessions.router, prefix="/sessions", tags=["sessions"]
 api_router.include_router(vision.router, prefix="/vision", tags=["vision"])
 api_router.include_router(voice.router, prefix="/voice", tags=["voice"])
 api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
+api_router.include_router(live.router, prefix="/live", tags=["live"])

@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # AI / LLM
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-1.5-flash"
+    # Modelo Live API (audio nativo). Free tier: ~3 sesiones concurrentes
+    LIVE_MODEL: str = "gemini-2.5-flash-native-audio-preview-12-2025"
     
     class Config:
         env_file = ".env"
