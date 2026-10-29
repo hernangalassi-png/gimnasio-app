@@ -12,12 +12,9 @@ from app.seed_data import seed_initial_data
 log("STARTUP", "Iniciando backend", {"project": settings.PROJECT_NAME, "version": settings.VERSION})
 _t0 = time.perf_counter()
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
-log("STARTUP", "create_all completado", {"elapsed_ms": round((time.perf_counter() - _t0) * 1000, 1)})
-
 
 def _ensure_exercise_columns():
+    """Agrega columnas nuevas a exercises en Postgres y SQLite (DBs viejas)."""
     with SessionLocal() as db:
         dialect = db.bind.dialect.name
         if dialect == 'postgresql':
@@ -25,15 +22,40 @@ def _ensure_exercise_columns():
             db.execute(text("ALTER TABLE exercises ADD COLUMN IF NOT EXISTS suitable_goals JSON"))
             db.execute(text("ALTER TABLE exercises ADD COLUMN IF NOT EXISTS difficulty VARCHAR"))
             db.commit()
+        elif dialect == 'sqlite':
+            existing = {row[1] for row in db.execute(text("PRAGMA table_info(exercises)"))}
+            if 'exercise_type' not in existing:
+                db.execute(text("ALTER TABLE exercises ADD COLUMN exercise_type VARCHAR NOT NULL DEFAULT 'squat'"))
+            if 'suitable_goals' not in existing:
+                db.execute(text("ALTER TABLE exercises ADD COLUMN suitable_goals JSON"))
+            if 'difficulty' not in existing:
+                db.execute(text("ALTER TABLE exercises ADD COLUMN difficulty VARCHAR"))
+            db.commit()
 
 
-_t1 = time.perf_counter()
-_ensure_exercise_columns()
-log("STARTUP", "_ensure_exercise_columns completado", {"elapsed_ms": round((time.perf_counter() - _t1) * 1000, 1)})
+def _bootstrap_database():
+    """
+    Create tables, add missing columns y seed inicial.
 
-_t2 = time.perf_counter()
-seed_initial_data()
-log("STARTUP", "seed_initial_data completado", {"elapsed_ms": round((time.perf_counter() - _t2) * 1000, 1)})
+    Se envuelve en try/except para que una DB caída (p.ej. la Postgres free de
+    Render que expira a los 30 días) no impida que uvicorn bindee el puerto:
+    el deploy queda healthy y /health/db reporta el error real.
+    """
+    t0 = time.perf_counter()
+    try:
+        Base.metadata.create_all(bind=engine)
+        log("STARTUP", "create_all completado", {"elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)})
+
+        _ensure_exercise_columns()
+        log("STARTUP", "_ensure_exercise_columns completado")
+
+        seed_initial_data()
+        log("STARTUP", "seed_initial_data completado")
+    except Exception as e:
+        log("STARTUP", "Bootstrap de DB FALLO; la app arranca igual, /health/db reportara el error", {"error": str(e)})
+
+
+_bootstrap_database()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

@@ -29,7 +29,25 @@ interface FaceDetectionResult {
   user?: User;
 }
 
-export const UserIdentification: React.FC<{ onUserIdentified: (user: User, members: User[], stream?: MediaStream | null) => void }> = ({ onUserIdentified }) => {
+// Tipos de entrenamiento que se ofrecen al identificar al usuario.
+// El orden importa: 'peso muerto' debe matchear fuerza antes que descenso_peso ('peso').
+const TRAINING_GOALS: Array<{ goal: string; label: string; re: RegExp }> = [
+  { goal: 'fuerza', label: 'fuerza', re: /fuerza|fuerte|pesas|peso muerto|strength/i },
+  { goal: 'hipertrofia', label: 'hipertrofia', re: /hipertrofia|volumen|m[úu]sculo|masa muscular|crecer/i },
+  { goal: 'resistencia', label: 'resistencia', re: /resistencia|cardio|aguante|aer[óo]bico/i },
+  { goal: 'movilidad', label: 'movilidad', re: /movilidad|flexibilidad|estirar|elongar/i },
+  { goal: 'descenso_peso', label: 'descenso de peso', re: /bajar|perder|adelgazar|peso|quemar|grasa/i },
+  { goal: 'salud_general', label: 'salud general', re: /salud|general|mantener|forma|tonificar/i },
+];
+
+const mapTrainingType = (transcript: string): { goal: string; label: string } | null => {
+  for (const t of TRAINING_GOALS) {
+    if (t.re.test(transcript)) return { goal: t.goal, label: t.label };
+  }
+  return null;
+};
+
+export const UserIdentification: React.FC<{ onUserIdentified: (user: User, members: User[], stream?: MediaStream | null, sessionGoal?: string | null) => void }> = ({ onUserIdentified }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceDetectionRef = useRef<any>(null);
   const faceMeshRef = useRef<any>(null);
@@ -105,10 +123,12 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   // Referencias seguras para la IA y los datos temporales
   const lastEmbeddingRef = useRef<number[] | null>(null);
   const pendingNameRef = useRef<string>('');
-  const registrationStepRef = useRef<'idle' | 'asking_name' | 'asking_goal'>('idle');
-  const [registrationStep, setRegistrationStep] = useState<'idle' | 'asking_name' | 'asking_goal'>('idle');
+  const registrationStepRef = useRef<'idle' | 'asking_name' | 'asking_goal' | 'asking_session_goal'>('idle');
+  const [registrationStep, setRegistrationStep] = useState<'idle' | 'asking_name' | 'asking_goal' | 'asking_session_goal'>('idle');
+  const pendingSessionGoalRef = useRef<string | null>(null);
+  const greetedRef = useRef(false); // "Hola {nombre}" solo en la PRIMERA identificación de la sesión
 
-  const updateRegistrationStep = (step: 'idle' | 'asking_name' | 'asking_goal') => {
+  const updateRegistrationStep = (step: 'idle' | 'asking_name' | 'asking_goal' | 'asking_session_goal') => {
     setRegistrationStep(step);
     registrationStepRef.current = step;
   };
@@ -471,8 +491,10 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         updateCurrentUser(response.data.user);
         addMember(response.data.user);
         setMode('members');
-        speak(`Hola ${response.data.user.name}. ¿Deseas iniciar tu rutina?`);
-        setMessage(`Hola ${response.data.user.name}`);
+        const greeting = greetedRef.current ? response.data.user.name : `Hola ${response.data.user.name}`;
+        greetedRef.current = true;
+        speak(`${greeting}. ¿Vas a entrenar?`);
+        setMessage(`${response.data.user.name} - ¿Vas a entrenar?`);
       } else {
         setFaceIconResult('error');
         setTimeout(() => setFaceIconResult(null), 1800);
@@ -591,10 +613,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       const hasMember = selectedMemberRef.current || membersRef.current.length > 0;
       if (isAffirmative && hasMember) {
         const user = selectedMemberRef.current || membersRef.current[membersRef.current.length - 1];
-        log('VOICE', 'Confirmación afirmativa -> iniciando rutina', { user: user?.name });
-        speak(`Perfecto${user?.name ? ' ' + user.name : ''}. Iniciando tu rutina.`, () => handleStartWorkoutForSelected());
-        // Si el TTS quedó bloqueado por autoplay, transicionar igual a los 4s
-        setTimeout(() => { if (!hasTransitionedRef.current) handleStartWorkoutForSelected(); }, 4000);
+        log('VOICE', 'Va a entrenar -> preguntando tipo de entrenamiento', { user: user?.name });
+        updateRegistrationStep('asking_session_goal');
+        speak('¿Qué tipo de entrenamiento querés hacer? Podés decir fuerza, hipertrofia, resistencia, movilidad, bajar de peso, o salud general.');
       } else if (isNegative && hasMember) {
         log('VOICE', 'Respuesta negativa -> agregar otro integrante');
         handleAddAnother();
@@ -602,7 +623,29 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         // No hay usuario identificado esperando confirmación: ignorar ruido
         log('VOICE', 'Sin confirmación pendiente, ignorando', { transcript });
       } else {
-        speak('No entendí. ¿Deseas iniciar tu rutina? Responde sí o no.', () => startListening());
+        speak('No entendí. ¿Vas a entrenar? Responde sí o no.', () => startListening());
+      }
+      return;
+    }
+
+    // El usuario ya confirmó que entrena: ahora elegimos el tipo de rutina
+    if (currentStep === 'asking_session_goal') {
+      const startWith = (goal: string | null, label: string) => {
+        pendingSessionGoalRef.current = goal;
+        updateRegistrationStep('idle');
+        log('VOICE', 'Tipo de entrenamiento elegido', { goal, label });
+        speak(label, () => handleStartWorkoutForSelected());
+        // Fallback por si el TTS quedó bloqueado por autoplay
+        setTimeout(() => { if (!hasTransitionedRef.current) handleStartWorkoutForSelected(); }, 4000);
+      };
+
+      const mapped = mapTrainingType(transcript);
+      if (mapped) {
+        startWith(mapped.goal, `Perfecto. Preparando tu rutina de ${mapped.label}.`);
+      } else if (/cualquiera|lo de siempre|habitual|normal|da igual|toda/i.test(transcript)) {
+        startWith(null, 'Perfecto. Armo tu rutina habitual.');
+      } else {
+        speak('No entendí. Decime un tipo: fuerza, hipertrofia, resistencia, movilidad, bajar de peso o salud general.', () => startListening());
       }
       return;
     }
@@ -673,6 +716,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       updateCurrentUser(response.data);
       addMember(response.data);
       setMessage(`Bienvenido ${name}`);
+      greetedRef.current = true; // "Bienvenido" ya es el saludo inicial
       speak(`Bienvenido ${name}. ¿Quién más va a entrenar? Toca Iniciar rutina o Agregar otro.`, () => {});
       setMode('members');
     } catch (error) {
@@ -689,7 +733,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     log('FLOW', 'Iniciando workout', { user: user?.name, members: allMembers.map(m => m.name) });
     if (user) {
       hasTransitionedRef.current = true;
-      onUserIdentified(user, allMembers, streamRef.current);
+      onUserIdentified(user, allMembers, streamRef.current, pendingSessionGoalRef.current);
     }
   }, [onUserIdentified]);
 

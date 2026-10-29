@@ -15,12 +15,14 @@ function App() {
   const [workoutMembers, setWorkoutMembers] = useState<User[]>([]);
   const [showWorkout, setShowWorkout] = useState(false);
   const [workoutStream, setWorkoutStream] = useState<MediaStream | null>(null);
+  const [sessionGoal, setSessionGoal] = useState<string | null>(null);
 
-  const handleUserIdentified = (user: User, members: User[], stream?: MediaStream | null) => {
-    log('APP', 'Usuario identificado -> mostrando Workout', { user: user.name, members: members.map(m => m.name), hasStream: !!stream });
+  const handleUserIdentified = (user: User, members: User[], stream?: MediaStream | null, goal?: string | null) => {
+    log('APP', 'Usuario identificado -> mostrando Workout', { user: user.name, members: members.map(m => m.name), hasStream: !!stream, sessionGoal: goal });
     setCurrentUser(user);
     setWorkoutMembers(members);
     setWorkoutStream(stream || null);
+    setSessionGoal(goal || null);
     setShowWorkout(true);
   };
 
@@ -28,6 +30,7 @@ function App() {
     log('APP', 'Volviendo a identificación');
     setShowWorkout(false);
     setCurrentUser(null);
+    setSessionGoal(null);
     if (workoutStream) {
       workoutStream.getTracks().forEach(t => t.stop());
       setWorkoutStream(null);
@@ -40,7 +43,7 @@ function App() {
         <UserIdentification onUserIdentified={handleUserIdentified} />
       ) : (
         <div>
-          <Workout user={currentUser} members={workoutMembers} stream={workoutStream} onBack={handleBackToIdentification} />
+          <Workout user={currentUser} members={workoutMembers} stream={workoutStream} sessionGoal={sessionGoal} onBack={handleBackToIdentification} />
           <button
             onClick={handleBackToIdentification}
             className="fixed top-4 right-4 bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg z-50"

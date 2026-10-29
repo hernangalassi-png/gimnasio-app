@@ -10,7 +10,9 @@ database_url = settings.DATABASE_URL
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
-connect_args = {"check_same_thread": False} if "sqlite" in database_url else {}
+# connect_timeout evita que un host DB caído/expirado cuelgue el arranque de
+# uvicorn (Render mata el deploy por port-scan timeout sin mostrar el error)
+connect_args = {"check_same_thread": False} if "sqlite" in database_url else {"connect_timeout": 10}
 engine_options = {"connect_args": connect_args}
 if "sqlite" not in database_url:
     engine_options["pool_pre_ping"] = True

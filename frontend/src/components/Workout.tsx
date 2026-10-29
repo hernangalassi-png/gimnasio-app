@@ -36,7 +36,7 @@ const EXERCISE_GUIDES: Record<string, { title: string; steps: string[]; spoken: 
   }
 };
 
-export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: MediaStream | null; onBack?: () => void }> = ({ user, members, stream, onBack }) => {
+export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: MediaStream | null; sessionGoal?: string | null; onBack?: () => void }> = ({ user, members, stream, sessionGoal, onBack }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const isProcessingRef = useRef(false);
   const lastSpokenFeedbackRef = useRef<string>('');
@@ -109,7 +109,9 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
     }
   }, []);
 
-  // Mostrar ejemplo del ejercicio actual (voz o botón)
+  // Mostrar ejemplo del ejercicio actual (voz o botón).
+  // Pausa el procesamiento de poses (helpActiveRef) y avisa a Live para que no
+  // hable mientras suena la guía: la explicación debe salir limpia.
   const showExerciseExample = useCallback(() => {
     if (helpActiveRef.current) return;
     const guide = EXERCISE_GUIDES[exerciseRef.current] || EXERCISE_GUIDES.squat;
@@ -118,7 +120,19 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
     lastSpokenFeedbackRef.current = '';
     window.speechSynthesis?.cancel();
     setShowExample(true);
+    liveClientRef.current?.sendContext('El usuario está viendo la explicación de cómo hacer el ejercicio. No hables ni des feedback hasta que la explicación termine y se reanude el entrenamiento.');
     speak(guide.spoken);
+  }, [speak]);
+
+  // Cierre de la guía: reanuda poses tras 1.5s de gracia y avisa a Live
+  const closeExerciseExample = useCallback((resumeMessage?: string) => {
+    setShowExample(false);
+    helpActiveRef.current = false;
+    resumeAtRef.current = Date.now() + 1500;
+    lastSpokenFeedbackRef.current = '';
+    window.speechSynthesis?.cancel();
+    liveClientRef.current?.sendContext('El usuario cerró la explicación del ejercicio. El entrenamiento se reanudó.');
+    if (resumeMessage) speak(resumeMessage);
   }, [speak]);
 
   // Persiste la serie pendiente del ejercicio actual (el contador backend resetea al cambiar de tipo)
@@ -408,7 +422,7 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
 
         const [equipment, routines, session] = await Promise.all([
           getEquipment(),
-          getRecommendedRoutines(user.id, []),
+          getRecommendedRoutines(user.id, [], sessionGoal || undefined),
           startWorkoutSession(userIds).catch(err => {
             log('SESSION', 'Error iniciando sesión', { error: err });
             return null;
@@ -452,7 +466,7 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
             }
           } catch {}
           log('LIVE', 'Canal de voz natural activo');
-          live.sendContext(`El usuario ${user.name} comenzó su rutina con ${routines[0]?.title || 'el primer ejercicio'}. Ejercicios disponibles: ${routines.map(r => `${r.title} (tipo ${r.exercise_type})`).join(', ')}. Saludalo brevemente y avisale que puede pedirte cambiar de ejercicio, ver un ejemplo, o terminar la rutina.`);
+          live.sendContext(`El usuario ${user.name} comenzó su rutina con ${routines[0]?.title || 'el primer ejercicio'}. Ejercicios disponibles: ${routines.map(r => `${r.title} (tipo ${r.exercise_type})`).join(', ')}. Ya lo saludaste por su nombre en la identificación, no repitas el saludo: dirigite a él solo por su nombre y avisale que puede pedirte cambiar de ejercicio, ver un ejemplo, o terminar la rutina.`);
         });
 
         if (routines.length > 0) {
@@ -468,7 +482,8 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
             : ' No necesitás equipamiento.';
 
           timer = setTimeout(() => {
-            const greeting = user.name ? `Hola ${user.name}. ` : '';
+            // Sin 'Hola': el saludo ya se dio en identificación; acá solo el nombre
+            const greeting = user.name ? `${user.name}. ` : '';
             speak(`${greeting}Tu rutina de hoy empieza con ${first.title}.${equipmentText} ${first.description} Si necesitás ver cómo se hace, decí: ejemplo.`, () => {
               introDoneRef.current = true;
             });
@@ -570,8 +585,10 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
               setStage(res.stage);
               setFeedback(res.feedback);
 
-              // Hablar solo cuando cambia el feedback importante y la intro ya terminó
-              if (introDoneRef.current && res.feedback && res.feedback !== lastSpokenFeedbackRef.current) {
+              // Hablar solo cuando cambia el feedback importante, la intro ya
+              // terminó y NO hay guía de ejemplo abierta (frame en vuelo podía
+              // resolver después de abrir el ejemplo y pisar el audio de la guía)
+              if (introDoneRef.current && !helpActiveRef.current && res.feedback && res.feedback !== lastSpokenFeedbackRef.current) {
                 const speakable = ['¡Buena repetición!', '¡Buena flexión!', 'Aléjate', 'No se detecta persona'];
                 if (speakable.some(s => res.feedback.includes(s))) {
                   lastSpokenFeedbackRef.current = res.feedback;
@@ -629,7 +646,7 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6">
           <div className="bg-gray-900/95 border border-white/15 rounded-2xl shadow-2xl max-w-md w-full p-6 relative">
             <button
-              onClick={() => { setShowExample(false); helpActiveRef.current = false; resumeAtRef.current = Date.now() + 1500; lastSpokenFeedbackRef.current = ''; window.speechSynthesis?.cancel(); }}
+              onClick={() => closeExerciseExample()}
               className="absolute top-3 right-3 text-gray-400 hover:text-white"
             >
               <X className="w-5 h-5" />
@@ -648,7 +665,7 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
               ))}
             </ol>
             <button
-              onClick={() => { setShowExample(false); helpActiveRef.current = false; resumeAtRef.current = Date.now() + 1500; lastSpokenFeedbackRef.current = ''; window.speechSynthesis?.cancel(); speak('Perfecto. Comienza cuando estés listo.'); }}
+              onClick={() => closeExerciseExample('Perfecto. Comienza cuando estés listo.')}
               className="mt-5 w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl font-bold text-sm transition"
             >
               Entendido, ¡vamos!

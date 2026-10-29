@@ -138,10 +138,11 @@ export const getEquipment = async (): Promise<Equipment[]> => {
   return response.data;
 };
 
-export const getRecommendedRoutines = async (userId: string, availableEquipmentIds: string[]): Promise<Exercise[]> => {
+export const getRecommendedRoutines = async (userId: string, availableEquipmentIds: string[], sessionGoal?: string): Promise<Exercise[]> => {
   const response = await api.post('/routines/recommend', {
     user_id: userId,
     available_equipment_ids: availableEquipmentIds,
+    session_goal: sessionGoal,
   });
   return response.data;
 };

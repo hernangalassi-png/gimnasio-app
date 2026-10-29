@@ -49,9 +49,12 @@ def recommend_routine(payload: RoutineRecommendRequest, db: Session = Depends(ge
     available_ids.add("peso-corporal")
 
     exercises = db.query(ExerciseModel).all()
-    user_goal = user.primary_goal or "salud_general"
+    VALID_GOALS = {"hipertrofia", "descenso_peso", "fuerza", "movilidad", "resistencia", "salud_general"}
+    session_goal = (payload.session_goal or "").strip().lower()
+    profile_goal = getattr(user.primary_goal, "value", user.primary_goal) or "salud_general"
+    user_goal = session_goal if session_goal in VALID_GOALS else profile_goal
     user_level = _rpe_to_level(user.target_rpe or 7.0)
-    log("RECOMMEND", "Perfil usuario", {"goal": user_goal, "level": user_level, "total_exercises": len(exercises), "available_equipment": list(available_ids)})
+    log("RECOMMEND", "Perfil usuario", {"goal": user_goal, "session_goal": session_goal or None, "level": user_level, "total_exercises": len(exercises), "available_equipment": list(available_ids)})
 
     def _matches(ex: ExerciseModel) -> bool:
         # Equipamiento requerido cubierto
@@ -65,6 +68,15 @@ def recommend_routine(payload: RoutineRecommendRequest, db: Session = Depends(ge
         return True
 
     filtered = [ex for ex in exercises if _matches(ex)]
+
+    # Si el objetivo elegido no tiene ejercicios asociados, relajar el filtro de
+    # objetivo y recomendar solo por equipamiento: nunca devolver rutina vacía.
+    if not filtered:
+        filtered = [
+            ex for ex in exercises
+            if set(ex.required_equipment_ids or []).issubset(available_ids)
+        ]
+        log("RECOMMEND", "Sin ejercicios para el objetivo -> fallback sin filtro de goal", {"goal": user_goal, "filtered": len(filtered)})
 
     # Ordenar: priorizar dificultad cercana al nivel del usuario, luego dificultad ascendente
     level_order = _difficulty_to_number(user_level)
