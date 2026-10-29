@@ -77,7 +77,10 @@ def identify_user(user_data: UserIdentify, db: Session = Depends(get_db)):
     target_embedding = np.array(user_data.face_embedding)
     best_match = None
     best_similarity = 0.0
-    threshold = 0.6  # Umbral de similitud para considerar una coincidencia
+    best_user = None
+    best_sim = 0.0
+    threshold = 0.6        # auto-identificar
+    candidate_floor = 0.45 # zona gris: ofrecer confirmación por voz en vez de re-registrar
 
     for user in users:
         if user.face_embedding:
@@ -93,6 +96,9 @@ def identify_user(user_data: UserIdentify, db: Session = Depends(get_db)):
             )
             log("IDENTIFY", "Similarity", {"user": user.name, "similarity": round(float(similarity), 4)})
 
+            if similarity > best_sim:
+                best_sim = similarity
+                best_user = user
             if similarity > best_similarity and similarity > threshold:
                 best_similarity = similarity
                 best_match = user
@@ -100,10 +106,14 @@ def identify_user(user_data: UserIdentify, db: Session = Depends(get_db)):
     elapsed = round((time.perf_counter() - t0) * 1000, 1)
     if best_match:
         log("IDENTIFY", "Usuario identificado", {"user": best_match.name, "similarity": round(float(best_similarity), 4), "elapsed_ms": elapsed})
-        return UserIdentifyResponse(identified=True, user=best_match)
+        return UserIdentifyResponse(identified=True, user=best_match, similarity=round(float(best_similarity), 4))
 
-    log("IDENTIFY", "No identificado (bajo threshold)", {"best_similarity": round(float(best_similarity), 4), "elapsed_ms": elapsed})
-    return UserIdentifyResponse(identified=False, user=None)
+    if best_user is not None and best_sim >= candidate_floor:
+        log("IDENTIFY", "Zona gris -> candidato para confirmación por voz", {"user": best_user.name, "similarity": round(float(best_sim), 4), "elapsed_ms": elapsed})
+        return UserIdentifyResponse(identified=False, user=None, candidate=best_user, similarity=round(float(best_sim), 4))
+
+    log("IDENTIFY", "No identificado (bajo candidate_floor)", {"best_similarity": round(float(best_sim), 4), "elapsed_ms": elapsed})
+    return UserIdentifyResponse(identified=False, user=None, similarity=round(float(best_sim), 4))
 
 
 @router.post("/quick-register", response_model=User)

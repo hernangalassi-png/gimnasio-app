@@ -75,5 +75,7 @@ class UserQuickRegister(BaseModel):
 
 
 class UserIdentifyResponse(BaseModel):
-    identified: bool = Field(..., description="Si se identificó el usuario")
+    identified: bool = Field(..., description="Si se identificó al usuario")
     user: Optional[User] = Field(None, description="Datos del usuario si fue identificado")
+    candidate: Optional[User] = Field(None, description="Mejor coincidencia bajo el umbral; el frontend puede confirmarla por voz")
+    similarity: float = Field(0.0, description="Similitud coseno de la mejor coincidencia")

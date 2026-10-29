@@ -27,6 +27,8 @@ interface User {
 interface FaceDetectionResult {
   identified: boolean;
   user?: User;
+  candidate?: User;
+  similarity?: number;
 }
 
 // Tipos de entrenamiento que se ofrecen al identificar al usuario.
@@ -123,12 +125,13 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   // Referencias seguras para la IA y los datos temporales
   const lastEmbeddingRef = useRef<number[] | null>(null);
   const pendingNameRef = useRef<string>('');
-  const registrationStepRef = useRef<'idle' | 'asking_name' | 'asking_goal' | 'asking_session_goal'>('idle');
-  const [registrationStep, setRegistrationStep] = useState<'idle' | 'asking_name' | 'asking_goal' | 'asking_session_goal'>('idle');
+  const pendingCandidateRef = useRef<User | null>(null);
+  const registrationStepRef = useRef<'idle' | 'asking_name' | 'asking_goal' | 'asking_session_goal' | 'confirming_identity'>('idle');
+  const [registrationStep, setRegistrationStep] = useState<'idle' | 'asking_name' | 'asking_goal' | 'asking_session_goal' | 'confirming_identity'>('idle');
   const pendingSessionGoalRef = useRef<string | null>(null);
   const greetedRef = useRef(false); // "Hola {nombre}" solo en la PRIMERA identificación de la sesión
 
-  const updateRegistrationStep = (step: 'idle' | 'asking_name' | 'asking_goal' | 'asking_session_goal') => {
+  const updateRegistrationStep = (step: 'idle' | 'asking_name' | 'asking_goal' | 'asking_session_goal' | 'confirming_identity') => {
     setRegistrationStep(step);
     registrationStepRef.current = step;
   };
@@ -330,6 +333,12 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     }, detections[0]);
   };
 
+  const cosineSim = (a: number[], b: number[]): number => {
+    let dot = 0, na = 0, nb = 0;
+    for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+    return dot / ((Math.sqrt(na) * Math.sqrt(nb)) || 1e-9);
+  };
+
   // 468 landmarks de FaceMesh -> embedding denso invariante a posición y escala.
   // Mucho más discriminativo que el geométrico (bbox+keypoints ~10 dims).
   const landmarksToEmbedding = (landmarks: any[]): { emb: number[]; good: number } | null => {
@@ -383,11 +392,27 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     const out = landmarksToEmbedding(lms);
     if (out) {
       meshDeadCountRef.current = 0;
-      // Solo sobreescribir si el nuevo vector tiene igual o más landmarks válidos
+      // Solo actualizar si el nuevo vector tiene igual o más landmarks válidos
       if (out.good >= meshGoodRef.current) {
-        meshGoodRef.current = out.good;
-        if (!meshEmbeddingRef.current) log('MESH', 'Primer embedding FaceMesh recibido', { dims: out.emb.length });
-        meshEmbeddingRef.current = out.emb;
+        const prev = meshEmbeddingRef.current;
+        if (!prev) {
+          log('MESH', 'Primer embedding FaceMesh recibido', { dims: out.emb.length });
+          meshEmbeddingRef.current = out.emb;
+          meshGoodRef.current = out.good;
+        } else if (cosineSim(prev, out.emb) < 0.7) {
+          // Cambio brusco del descriptor (probablemente otra persona):
+          // reiniciar el promedio para no mezclar caras distintas
+          meshEmbeddingRef.current = out.emb;
+          meshGoodRef.current = out.good;
+        } else {
+          // EMA (alpha=0.3): suaviza el jitter frame a frame; lo que se envía a
+          // /identify es un promedio temporal, mucho más estable que un snapshot
+          const alpha = 0.3;
+          const blended = new Array<number>(prev.length);
+          for (let i = 0; i < prev.length; i++) blended[i] = prev[i] * (1 - alpha) + out.emb[i] * alpha;
+          meshEmbeddingRef.current = blended;
+          meshGoodRef.current = Math.max(meshGoodRef.current, out.good);
+        }
       }
     } else if (!meshGaveUpRef.current) {
       meshDeadCountRef.current += 1;
@@ -495,6 +520,15 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         greetedRef.current = true;
         speak(`${greeting}. ¿Vas a entrenar?`);
         setMessage(`${response.data.user.name} - ¿Vas a entrenar?`);
+      } else if (response.data.candidate) {
+        // Zona gris (0.45-0.6): probable match que no supera el umbral estricto.
+        // Confirmar por voz en vez de forzar un re-registro que duplica usuarios.
+        const cand = response.data.candidate;
+        log('IDENTIFY', 'Candidato zona gris -> confirmación por voz', { user: cand.name, similarity: response.data.similarity });
+        pendingCandidateRef.current = cand;
+        updateRegistrationStep('confirming_identity');
+        speak(`Creo que sos ${cand.name}. ¿Sos vos?`, () => startListening());
+        setMessage(`¿Sos ${cand.name}? Respondé sí o no.`);
       } else {
         setFaceIconResult('error');
         setTimeout(() => setFaceIconResult(null), 1800);
@@ -624,6 +658,34 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         log('VOICE', 'Sin confirmación pendiente, ignorando', { transcript });
       } else {
         speak('No entendí. ¿Vas a entrenar? Responde sí o no.', () => startListening());
+      }
+      return;
+    }
+
+    // Zona gris de identificación: el backend sugirió un usuario probable
+    if (currentStep === 'confirming_identity') {
+      const cand = pendingCandidateRef.current;
+      const isYes = /(^|\s)(s[ií]|yes|okay|ok|dale|claro|exacto|correcto|yo soy|el mismo|la misma)/i.test(transcript);
+      const isNo = /(^|\s)(no|nunca|jamás|nop|negativo|otro|otra)/i.test(transcript);
+
+      if (isYes && cand) {
+        pendingCandidateRef.current = null;
+        updateRegistrationStep('idle');
+        setFaceIconResult('success');
+        updateCurrentUser(cand);
+        addMember(cand);
+        setMode('members');
+        const greeting = greetedRef.current ? cand.name : `Hola ${cand.name}`;
+        greetedRef.current = true;
+        speak(`${greeting}. ¿Vas a entrenar?`);
+        setMessage(`${cand.name} - ¿Vas a entrenar?`);
+      } else if (isNo || !cand) {
+        pendingCandidateRef.current = null;
+        updateRegistrationStep('asking_name');
+        speak('De acuerdo, te registro como nuevo. ¿Cómo te llamas?', () => startListening());
+        setMessage('Dime tu nombre...');
+      } else {
+        speak(`No entendí. ¿Sos ${cand.name}? Respondé sí o no.`, () => startListening());
       }
       return;
     }
