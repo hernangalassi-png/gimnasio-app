@@ -114,6 +114,9 @@ export class LiveVoiceClient {
     this.workletNode.port.onmessage = (ev) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
       if (this.modelSpeaking) return; // GALIA hablando: no subir el eco del parlante
+      // TTS local (intro de rutina, guías) suena por el mismo parlante: si lo
+      // subimos, Live lo escucha, responde encima y se percibe ruido/doble voz.
+      if (window.speechSynthesis?.speaking) return;
       const b64 = btoa(String.fromCharCode(...new Uint8Array(ev.data)));
       this.ws.send(JSON.stringify({ type: 'audio', data: b64 }));
     };
@@ -154,6 +157,9 @@ export class LiveVoiceClient {
   private playPcm24(b64: string) {
     if (!this.playbackCtx) this.playbackCtx = new AudioContext({ sampleRate: 24000 });
     const ctx = this.playbackCtx;
+    // Autoplay policy: si el ctx quedó suspended, reanudar para que los chunks
+    // no se acumulen en un tiempo congelado y suenen todos de golpe (ruido).
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     const int16 = new Int16Array(bytes.buffer);
     const float32 = new Float32Array(int16.length);

@@ -454,6 +454,12 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
           onStatus: (s) => {
             setLiveConnected(s === 'connected');
             liveActiveRef.current = s === 'connected';
+            if (s === 'connected') {
+              // Live toma el canal de voz: cortar el TTS intro local para que no
+              // suene encima del audio PCM de Live (solape = ruido/doble voz).
+              window.speechSynthesis?.cancel();
+              isSpeakingRef.current = false;
+            }
           },
           onSpeaking: (sp) => {
             // Cuando el modelo habla por el canal Live (PCM), cortar cualquier
