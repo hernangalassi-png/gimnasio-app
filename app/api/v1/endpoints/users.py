@@ -81,6 +81,13 @@ def identify_user(user_data: UserIdentify, db: Session = Depends(get_db)):
     best_sim = 0.0
     threshold = 0.6        # auto-identificar
     candidate_floor = 0.45 # zona gris: ofrecer confirmación por voz en vez de re-registrar
+    # El embedding geométrico de fallback (~10 dims: bbox + keypoints) codifica
+    # la POSICION de la cara en el frame, no la identidad. Sus similitudes coseno
+    # estan infladas (vectores aleatorios ya dan ~0.7), asi que jamas debe
+    # auto-identificar: como mucho llega a candidato para confirmacion por voz.
+    if int(target_embedding.size) < 128:
+        threshold = 1.1
+        candidate_floor = 0.8
 
     for user in users:
         if user.face_embedding:

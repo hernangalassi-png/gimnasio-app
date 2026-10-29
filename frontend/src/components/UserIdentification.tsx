@@ -435,6 +435,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     log('MESH', 'Landmarks 100% NaN sostenidos -> recreando instancia', { attempt: meshRecreateAttemptsRef.current });
     const old = faceMeshRef.current;
     faceMeshRef.current = null;
+    // Reiniciar la ventana de espera para darle al wasm de la nueva instancia
+    // sus ~2-3s de warm-up antes de caer al fallback geométrico.
+    meshWaitStartRef.current = 0;
     try { old?.close(); } catch (e) {}
     const inst = new window.FaceMesh({ locateFile: (f: string) => `mediapipe/${f}` });
     inst.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5 });
@@ -596,16 +599,17 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         const newCount = stableFramesRef.current;
         if (newCount >= 15 && !isDetectingRef.current) {
           const hasMeshEmb = !!(meshEmbeddingRef.current && meshEmbeddingRef.current.length > 0);
-          if (faceMeshRef.current && !hasMeshEmb) {
-            // FaceMesh aún no entregó su primer resultado (warm-up wasm ~2-3s):
-            // esperar hasta 2.5s antes de caer al embedding geométrico, que casi
-            // nunca matchea contra los vectores de 936 dims almacenados.
+          if (!hasMeshEmb && !meshGaveUpRef.current) {
+            // FaceMesh aún no entregó su primer resultado (warm-up wasm ~2-3s)
+            // o está recreándose (faceMeshRef.current null mientras initialize()).
+            // Esperar antes de caer al geométrico: ese vector de 10 dims codifica
+            // posición de la cara, no identidad -> solo sirve de candidato.
             if (!meshWaitStartRef.current) {
               meshWaitStartRef.current = performance.now();
               log('FACE', 'Esperando primer embedding FaceMesh');
             }
             const waited = performance.now() - meshWaitStartRef.current;
-            if (waited < 1500) {
+            if (waited < 2500) {
               stableFramesRef.current -= 1; // mantener en 14 hasta el mesh o el timeout
               setFaceStableCount(stableFramesRef.current);
               return;
