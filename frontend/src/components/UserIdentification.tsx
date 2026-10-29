@@ -46,6 +46,11 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const missesRef = useRef(0);
   const meshFirstResultLoggedRef = useRef(false);
   const meshBadLandmarksLoggedRef = useRef(false);
+  const meshLastBadLogRef = useRef(0);
+  const meshGoodRef = useRef(0);
+  const meshDeadCountRef = useRef(0);
+  const meshRecreateAttemptsRef = useRef(0);
+  const meshGaveUpRef = useRef(false);
   const isProcessingFrameRef = useRef(false);
   const hasTransitionedRef = useRef(false);
   const isInitializedRef = useRef(false);
@@ -307,8 +312,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
 
   // 468 landmarks de FaceMesh -> embedding denso invariante a posición y escala.
   // Mucho más discriminativo que el geométrico (bbox+keypoints ~10 dims).
-  const landmarksToEmbedding = (landmarks: any[]): number[] => {
-    if (!landmarks || landmarks.length < 400) return [];
+  const landmarksToEmbedding = (landmarks: any[]): { emb: number[]; good: number } | null => {
+    if (!landmarks || landmarks.length < 400) return null;
     // En algunos devices/builds wasm, ciertos landmarks llegan NaN/Infinity en
     // CADA frame. Se imputan al centroide (0 post-normalización) en vez de
     // descartar todo el vector: la señal de identidad queda casi intacta.
@@ -318,8 +323,12 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       else bad++;
     }
     if (good < 400) {
-      log('MESH', 'Demasiados landmarks inválidos, descartado', { good, bad });
-      return [];
+      const now = performance.now();
+      if (now - meshLastBadLogRef.current > 3000) {
+        meshLastBadLogRef.current = now;
+        log('MESH', 'Demasiados landmarks inválidos, descartado', { good, bad });
+      }
+      return null;
     }
     if (bad > 0 && !meshBadLandmarksLoggedRef.current) {
       meshBadLandmarksLoggedRef.current = true;
@@ -337,7 +346,65 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
       const ok = Number.isFinite(p.x) && Number.isFinite(p.y);
       emb.push(ok ? (p.x - cx) / scale : 0, ok ? (p.y - cy) / scale : 0);
     }
-    return emb;
+    return { emb, good };
+  };
+
+  // El wasm de FaceMesh en algunos devices entra en un estado corrupto donde
+  // devuelve los 468 landmarks NaN en TODOS los frames. Tras ~25 resultados
+  // muertos seguidos se recrea la instancia (máx 2 intentos); si no se
+  // recupera, se apaga el envío de frames y queda el fallback geométrico.
+  const handleMeshResults = (res: any) => {
+    const lms = res.multiFaceLandmarks?.[0];
+    if (!meshFirstResultLoggedRef.current) {
+      meshFirstResultLoggedRef.current = true;
+      log('MESH', 'Primer resultado FaceMesh', { hasLandmarks: !!lms, faces: res.multiFaceLandmarks?.length ?? 0 });
+    }
+    if (!lms) return;
+    const out = landmarksToEmbedding(lms);
+    if (out) {
+      meshDeadCountRef.current = 0;
+      // Solo sobreescribir si el nuevo vector tiene igual o más landmarks válidos
+      if (out.good >= meshGoodRef.current) {
+        meshGoodRef.current = out.good;
+        if (!meshEmbeddingRef.current) log('MESH', 'Primer embedding FaceMesh recibido', { dims: out.emb.length });
+        meshEmbeddingRef.current = out.emb;
+      }
+    } else if (!meshGaveUpRef.current) {
+      meshDeadCountRef.current += 1;
+      if (meshDeadCountRef.current >= 25) {
+        meshDeadCountRef.current = 0;
+        recreateFaceMesh();
+      }
+    }
+  };
+
+  const recreateFaceMesh = () => {
+    if (typeof window.FaceMesh === 'undefined') return;
+    meshRecreateAttemptsRef.current += 1;
+    if (meshRecreateAttemptsRef.current > 2) {
+      meshGaveUpRef.current = true;
+      faceMeshRef.current = null; // el loop deja de enviarle frames
+      log('MESH', 'FaceMesh inválido persistente -> fallback geométrico permanente');
+      return;
+    }
+    log('MESH', 'Landmarks 100% NaN sostenidos -> recreando instancia', { attempt: meshRecreateAttemptsRef.current });
+    const old = faceMeshRef.current;
+    faceMeshRef.current = null;
+    try { old?.close(); } catch (e) {}
+    const inst = new window.FaceMesh({ locateFile: (f: string) => `mediapipe/${f}` });
+    inst.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5 });
+    inst.onResults(handleMeshResults);
+    inst.initialize()
+      .then(() => {
+        globalFaceMeshInstance = inst;
+        faceMeshRef.current = inst;
+        meshGoodRef.current = 0;
+        log('MESH', 'Instancia FaceMesh recreada OK');
+      })
+      .catch((e: any) => {
+        log('MESH', 'Recreate FaceMesh falló', { error: String(e) });
+        meshGaveUpRef.current = true;
+      });
   };
 
   const extractEmbedding = (detection: any): number[] => {
@@ -504,6 +571,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         setFaceStableCount(0);
         lastEmbeddingRef.current = null;
         meshEmbeddingRef.current = null;
+        meshGoodRef.current = 0;
         meshWaitStartRef.current = 0;
       }
     }
@@ -637,6 +705,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     setFaceIconResult(null);
     pendingNameRef.current = '';
     lastEmbeddingRef.current = null;
+    meshGoodRef.current = 0;
     meshEmbeddingRef.current = null;
     meshWaitStartRef.current = 0;
     setMode('detecting');
@@ -658,6 +727,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     pendingNameRef.current = '';
     lastEmbeddingRef.current = null;
     meshEmbeddingRef.current = null;
+    meshGoodRef.current = 0;
     meshWaitStartRef.current = 0;
     setMembers([]);
     setSelectedMember(null);
@@ -752,20 +822,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
               log('INIT', 'Modelo FaceMesh inicializado', { elapsed_ms: Math.round(performance.now() - tMesh) });
             }
             // onResults se reasigna en cada mount: el ref pertenece a esta instancia del componente
-            globalFaceMeshInstance.onResults((res: any) => {
-              const lms = res.multiFaceLandmarks?.[0];
-              if (!meshFirstResultLoggedRef.current) {
-                meshFirstResultLoggedRef.current = true;
-                log('MESH', 'Primer resultado FaceMesh', { hasLandmarks: !!lms, faces: res.multiFaceLandmarks?.length ?? 0 });
-              }
-              if (lms) {
-                const emb = landmarksToEmbedding(lms);
-                if (emb.length > 0) {
-                  if (!meshEmbeddingRef.current) log('MESH', 'Primer embedding FaceMesh recibido', { dims: emb.length });
-                  meshEmbeddingRef.current = emb;
-                }
-              }
-            });
+            globalFaceMeshInstance.onResults(handleMeshResults);
             faceMeshRef.current = globalFaceMeshInstance;
           } else {
             log('INIT', 'FaceMesh no disponible -> fallback a embedding geométrico');
