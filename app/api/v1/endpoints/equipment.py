@@ -30,7 +30,7 @@ def get_equipment(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 
 @router.get("/{equipment_id}", response_model=Equipment)
 def get_equipment_by_id(equipment_id: UUID, db: Session = Depends(get_db)):
-    equipment = db.query(EquipmentModel).filter(EquipmentModel.id == equipment_id).first()
+    equipment = db.query(EquipmentModel).filter(EquipmentModel.id == str(equipment_id)).first()
     if not equipment:
         raise HTTPException(status_code=404, detail="Equipment not found")
     return equipment
@@ -38,7 +38,7 @@ def get_equipment_by_id(equipment_id: UUID, db: Session = Depends(get_db)):
 
 @router.put("/{equipment_id}", response_model=Equipment)
 def update_equipment(equipment_id: UUID, equipment: EquipmentUpdate, db: Session = Depends(get_db)):
-    db_equipment = db.query(EquipmentModel).filter(EquipmentModel.id == equipment_id).first()
+    db_equipment = db.query(EquipmentModel).filter(EquipmentModel.id == str(equipment_id)).first()
     if not db_equipment:
         raise HTTPException(status_code=404, detail="Equipment not found")
     
@@ -53,7 +53,7 @@ def update_equipment(equipment_id: UUID, equipment: EquipmentUpdate, db: Session
 
 @router.delete("/{equipment_id}")
 def delete_equipment(equipment_id: UUID, db: Session = Depends(get_db)):
-    db_equipment = db.query(EquipmentModel).filter(EquipmentModel.id == equipment_id).first()
+    db_equipment = db.query(EquipmentModel).filter(EquipmentModel.id == str(equipment_id)).first()
     if not db_equipment:
         raise HTTPException(status_code=404, detail="Equipment not found")
     

@@ -30,7 +30,7 @@ def get_exercises(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)
 
 @router.get("/{exercise_id}", response_model=Exercise)
 def get_exercise(exercise_id: UUID, db: Session = Depends(get_db)):
-    exercise = db.query(ExerciseModel).filter(ExerciseModel.id == exercise_id).first()
+    exercise = db.query(ExerciseModel).filter(ExerciseModel.id == str(exercise_id)).first()
     if not exercise:
         raise HTTPException(status_code=404, detail="Exercise not found")
     return exercise
@@ -38,7 +38,7 @@ def get_exercise(exercise_id: UUID, db: Session = Depends(get_db)):
 
 @router.put("/{exercise_id}", response_model=Exercise)
 def update_exercise(exercise_id: UUID, exercise: ExerciseUpdate, db: Session = Depends(get_db)):
-    db_exercise = db.query(ExerciseModel).filter(ExerciseModel.id == exercise_id).first()
+    db_exercise = db.query(ExerciseModel).filter(ExerciseModel.id == str(exercise_id)).first()
     if not db_exercise:
         raise HTTPException(status_code=404, detail="Exercise not found")
     
@@ -53,7 +53,7 @@ def update_exercise(exercise_id: UUID, exercise: ExerciseUpdate, db: Session = D
 
 @router.delete("/{exercise_id}")
 def delete_exercise(exercise_id: UUID, db: Session = Depends(get_db)):
-    db_exercise = db.query(ExerciseModel).filter(ExerciseModel.id == exercise_id).first()
+    db_exercise = db.query(ExerciseModel).filter(ExerciseModel.id == str(exercise_id)).first()
     if not db_exercise:
         raise HTTPException(status_code=404, detail="Exercise not found")
     

@@ -28,7 +28,7 @@ def get_users(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
 
 @router.get("/{user_id}", response_model=User)
 def get_user(user_id: UUID, db: Session = Depends(get_db)):
-    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    user = db.query(UserModel).filter(UserModel.id == str(user_id)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
@@ -36,7 +36,7 @@ def get_user(user_id: UUID, db: Session = Depends(get_db)):
 
 @router.put("/{user_id}", response_model=User)
 def update_user(user_id: UUID, user: UserUpdate, db: Session = Depends(get_db)):
-    db_user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    db_user = db.query(UserModel).filter(UserModel.id == str(user_id)).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found")
     
@@ -51,7 +51,7 @@ def update_user(user_id: UUID, user: UserUpdate, db: Session = Depends(get_db)):
 
 @router.delete("/{user_id}")
 def delete_user(user_id: UUID, db: Session = Depends(get_db)):
-    db_user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    db_user = db.query(UserModel).filter(UserModel.id == str(user_id)).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="User not found")
     

@@ -36,7 +36,7 @@ def start_session(request: SessionStartRequest, db: Session = Depends(get_db)):
 @router.post("/{session_id}/log_set", response_model=WorkoutLog)
 def log_set(session_id: UUID, request: LogSetRequest, db: Session = Depends(get_db)):
     # Verify session exists and is in progress
-    session = db.query(WorkoutSessionModel).filter(WorkoutSessionModel.id == session_id).first()
+    session = db.query(WorkoutSessionModel).filter(WorkoutSessionModel.id == str(session_id)).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.status != SessionStatus.IN_PROGRESS:
@@ -47,8 +47,8 @@ def log_set(session_id: UUID, request: LogSetRequest, db: Session = Depends(get_
         raise HTTPException(status_code=400, detail="User is not part of this session")
     
     db_log = WorkoutLogModel(
-        session_id=session_id,
-        user_id=request.user_id,
+        session_id=str(session_id),
+        user_id=str(request.user_id),
         exercise_id=request.exercise_id,
         set_number=request.set_number,
         target_reps=request.target_reps,
@@ -64,7 +64,7 @@ def log_set(session_id: UUID, request: LogSetRequest, db: Session = Depends(get_
 
 @router.post("/{session_id}/end", response_model=SessionSummary)
 def end_session(session_id: UUID, db: Session = Depends(get_db)):
-    session = db.query(WorkoutSessionModel).filter(WorkoutSessionModel.id == session_id).first()
+    session = db.query(WorkoutSessionModel).filter(WorkoutSessionModel.id == str(session_id)).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     if session.status != SessionStatus.IN_PROGRESS:
@@ -76,7 +76,7 @@ def end_session(session_id: UUID, db: Session = Depends(get_db)):
     db.commit()
     
     # Calculate summary
-    logs = db.query(WorkoutLogModel).filter(WorkoutLogModel.session_id == session_id).all()
+    logs = db.query(WorkoutLogModel).filter(WorkoutLogModel.session_id == str(session_id)).all()
     
     total_sets = len(logs)
     total_volume_kg = sum(
@@ -98,7 +98,7 @@ def end_session(session_id: UUID, db: Session = Depends(get_db)):
 
 @router.get("/{session_id}", response_model=WorkoutSession)
 def get_session(session_id: UUID, db: Session = Depends(get_db)):
-    session = db.query(WorkoutSessionModel).filter(WorkoutSessionModel.id == session_id).first()
+    session = db.query(WorkoutSessionModel).filter(WorkoutSessionModel.id == str(session_id)).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
