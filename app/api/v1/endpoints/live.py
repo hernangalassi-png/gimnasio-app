@@ -14,6 +14,19 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.config import settings
 from app.core.logging import log
 
+# google-genai se importa a nivel de módulo: el import pesa varios segundos
+# (grpc/pydantic) en CPU débil. Dentro del handler congelaba el event loop,
+# bloqueaba /vision/process-pose (~17s) y el cliente WS timeouteaba esperando
+# 'ready'. Aquí el costo se paga una sola vez al boot del servidor.
+try:
+    from google import genai
+    from google.genai import types
+    _GENAI_AVAILABLE = True
+except ImportError:
+    genai = None  # type: ignore
+    types = None  # type: ignore
+    _GENAI_AVAILABLE = False
+
 router = APIRouter()
 
 SYSTEM_INSTRUCTION = """Sos GALIA, la asistente de voz de un gimnasio inteligente.
@@ -93,10 +106,7 @@ async def live_ws(websocket: WebSocket):
         await websocket.close(code=1011)
         return
 
-    try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
+    if not _GENAI_AVAILABLE:
         await websocket.send_json({"type": "error", "detail": "google-genai no instalado en el backend"})
         await websocket.close(code=1011)
         return

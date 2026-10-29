@@ -383,6 +383,9 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
       if (activeRef.current) setTimeout(startListening, 1200);
     };
     recog.onresult = (event: any) => {
+      // El mic capta el TTS propio (bocina) y llegaba como comando falso
+      // ('no se detecta persona', 'buena repetición'...). Descartar el eco.
+      if (isSpeakingRef.current) return;
       const transcript = event.results[0][0].transcript.toLowerCase();
       log('VOICE', 'Comando en workout', { transcript });
       handleWorkoutVoice(transcript);
@@ -598,11 +601,12 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
               setStage(res.stage);
               setFeedback(res.feedback);
 
-              // Hablar solo cuando cambia el feedback importante, la intro ya
-              // terminó y NO hay guía de ejemplo abierta (frame en vuelo podía
-              // resolver después de abrir el ejemplo y pisar el audio de la guía)
+              // Hablar SOLO eventos de rep: los mensajes de posicionamiento
+              // ('Aléjate', 'No se detecta persona') quedan solo en pantalla —
+              // hablados eran invasivos (interrumpían guías y comandos) y el
+              // mic reconocía la propia voz como comandos falsos.
               if (introDoneRef.current && !helpActiveRef.current && res.feedback && res.feedback !== lastSpokenFeedbackRef.current) {
-                const speakable = ['¡Buena repetición!', '¡Buena flexión!', 'Aléjate', 'No se detecta persona'];
+                const speakable = ['¡Buena repetición!', '¡Buena flexión!'];
                 if (speakable.some(s => res.feedback.includes(s))) {
                   lastSpokenFeedbackRef.current = res.feedback;
                   speak(res.feedback);

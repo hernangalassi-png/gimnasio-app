@@ -30,6 +30,7 @@ function App() {
     log('APP', 'Volviendo a identificación');
     setShowWorkout(false);
     setCurrentUser(null);
+    setWorkoutMembers([]);
     setSessionGoal(null);
     if (workoutStream) {
       workoutStream.getTracks().forEach(t => t.stop());
