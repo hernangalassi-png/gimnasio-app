@@ -164,7 +164,10 @@ export class LiveVoiceClient {
     src.connect(ctx.destination);
 
     const now = ctx.currentTime;
-    const startAt = Math.max(now, this.nextPlayTime);
+    // Lead de 60ms: buffer de jitter para que chunks que llegan con delay
+    // variable no se programen "ya" y dejen micro-gaps (se escucha fritura).
+    // Si la cola quedó atrás (underrun), nextPlayTime se re-ancla acá.
+    const startAt = Math.max(now + 0.06, this.nextPlayTime);
     src.start(startAt);
     this.nextPlayTime = startAt + buffer.duration;
     this.playSources.push(src);

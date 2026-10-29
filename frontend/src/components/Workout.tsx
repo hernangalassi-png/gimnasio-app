@@ -448,7 +448,16 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
             setLiveConnected(s === 'connected');
             liveActiveRef.current = s === 'connected';
           },
-          onSpeaking: (sp) => setIsSpeaking(sp),
+          onSpeaking: (sp) => {
+            // Cuando el modelo habla por el canal Live (PCM), cortar cualquier
+            // TTS local en curso: los dos streams solapados se perciben como
+            // ruido de "fritura" / crash de audio.
+            if (sp) {
+              window.speechSynthesis?.cancel();
+              isSpeakingRef.current = false;
+            }
+            setIsSpeaking(sp);
+          },
           onTranscript: (kind, text) => log('LIVE', 'Transcript', { kind, text: text.slice(0, 120) }),
         });
         live.connect().then(ok => {

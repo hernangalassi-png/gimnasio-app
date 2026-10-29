@@ -637,6 +637,17 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     }
   }, [identifyUser]);
 
+  // Elegir el tipo de rutina y arrancar el workout. Compartido entre la voz
+  // (asking_session_goal) y los chips táctiles que se muestran en pantalla.
+  const startSessionWithGoal = (goal: string | null, label: string) => {
+    pendingSessionGoalRef.current = goal;
+    updateRegistrationStep('idle');
+    log('VOICE', 'Tipo de entrenamiento elegido', { goal, label });
+    speak(label, () => handleStartWorkoutForSelected());
+    // Fallback por si el TTS quedó bloqueado por autoplay
+    setTimeout(() => { if (!hasTransitionedRef.current) handleStartWorkoutForSelected(); }, 4000);
+  };
+
   // NUEVO: Manejador inteligente que consulta al backend de IA (/api/v1/ai/parse-speech)
   const handleVoiceCommand = async (transcript: string) => {
     const currentStep = registrationStepRef.current;
@@ -653,7 +664,11 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         const user = selectedMemberRef.current || membersRef.current[membersRef.current.length - 1];
         log('VOICE', 'Va a entrenar -> preguntando tipo de entrenamiento', { user: user?.name });
         updateRegistrationStep('asking_session_goal');
-        speak('¿Qué tipo de entrenamiento querés hacer? Podés decir fuerza, hipertrofia, resistencia, movilidad, bajar de peso, o salud general.');
+        // Prompt corto: las opciones se muestran como chips en pantalla y
+        // también se pueden decir por voz. Enumerarlas todas por TTS alarga
+        // mucho el flujo.
+        speak('¿Qué querés entrenar hoy?');
+        setMessage('Elegí o decí: fuerza, hipertrofia, resistencia, movilidad, bajar de peso o salud general.');
       } else if (isNegative && hasMember) {
         log('VOICE', 'Respuesta negativa -> agregar otro integrante');
         handleAddAnother();
@@ -696,22 +711,13 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
 
     // El usuario ya confirmó que entrena: ahora elegimos el tipo de rutina
     if (currentStep === 'asking_session_goal') {
-      const startWith = (goal: string | null, label: string) => {
-        pendingSessionGoalRef.current = goal;
-        updateRegistrationStep('idle');
-        log('VOICE', 'Tipo de entrenamiento elegido', { goal, label });
-        speak(label, () => handleStartWorkoutForSelected());
-        // Fallback por si el TTS quedó bloqueado por autoplay
-        setTimeout(() => { if (!hasTransitionedRef.current) handleStartWorkoutForSelected(); }, 4000);
-      };
-
       const mapped = mapTrainingType(transcript);
       if (mapped) {
-        startWith(mapped.goal, `Perfecto. Preparando tu rutina de ${mapped.label}.`);
+        startSessionWithGoal(mapped.goal, `Perfecto. Preparando tu rutina de ${mapped.label}.`);
       } else if (/cualquiera|lo de siempre|habitual|normal|da igual|toda/i.test(transcript)) {
-        startWith(null, 'Perfecto. Armo tu rutina habitual.');
+        startSessionWithGoal(null, 'Perfecto. Armo tu rutina habitual.');
       } else {
-        speak('No entendí. Decime un tipo: fuerza, hipertrofia, resistencia, movilidad, bajar de peso o salud general.', () => startListening());
+        speak('No entendí. Tocá una opción en pantalla o decí el tipo de entrenamiento.', () => startListening());
       }
       return;
     }
@@ -1152,26 +1158,48 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
                 </button>
               ))}
             </div>
-            <div className="flex space-x-3">
-              <button
-                onClick={() => handleStartWorkoutForSelected()}
-                className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
-              >
-                Iniciar rutina
-              </button>
-              <button
-                onClick={handleAddAnother}
-                className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
-              >
-                Agregar otro
-              </button>
-              <button
-                onClick={handleResetAll}
-                className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
-              >
-                Reiniciar
-              </button>
-            </div>
+            {registrationStep === 'asking_session_goal' ? (
+              // Chips de tipo de entrenamiento: el prompt por voz es corto y las
+              // opciones se leen acá; también se pueden decir en voz alta.
+              <div className="flex flex-wrap gap-2 justify-center">
+                {TRAINING_GOALS.map((t) => (
+                  <button
+                    key={t.goal}
+                    onClick={() => startSessionWithGoal(t.goal, `Perfecto. Preparando tu rutina de ${t.label}.`)}
+                    className="px-3 py-2 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-blue-600 transition"
+                  >
+                    {t.label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => startSessionWithGoal(null, 'Perfecto. Armo tu rutina habitual.')}
+                  className="px-3 py-2 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-green-600 transition"
+                >
+                  Lo de siempre
+                </button>
+              </div>
+            ) : (
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => handleStartWorkoutForSelected()}
+                  className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+                >
+                  Iniciar rutina
+                </button>
+                <button
+                  onClick={handleAddAnother}
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
+                >
+                  Agregar otro
+                </button>
+                <button
+                  onClick={handleResetAll}
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
+                >
+                  Reiniciar
+                </button>
+              </div>
+            )}
           </div>
         ) : (
           <>
