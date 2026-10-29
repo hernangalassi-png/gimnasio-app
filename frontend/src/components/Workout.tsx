@@ -109,6 +109,20 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
     }
   }, []);
 
+  // Cierre de la guía: reanuda poses tras 1.5s de gracia y avisa a Live.
+  // Guardado por helpActiveRef: un cierre manual dispara cancel() -> onend ->
+  // segundo intento de cierre, y el fallback por timeout puede llegar después.
+  const closeExerciseExample = useCallback((resumeMessage?: string) => {
+    if (!helpActiveRef.current) return;
+    setShowExample(false);
+    helpActiveRef.current = false;
+    resumeAtRef.current = Date.now() + 1500;
+    lastSpokenFeedbackRef.current = '';
+    window.speechSynthesis?.cancel();
+    liveClientRef.current?.sendContext('El usuario cerró la explicación del ejercicio. El entrenamiento se reanudó.');
+    if (resumeMessage) speak(resumeMessage);
+  }, [speak]);
+
   // Mostrar ejemplo del ejercicio actual (voz o botón).
   // Pausa el procesamiento de poses (helpActiveRef) y avisa a Live para que no
   // hable mientras suena la guía: la explicación debe salir limpia.
@@ -121,19 +135,12 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
     window.speechSynthesis?.cancel();
     setShowExample(true);
     liveClientRef.current?.sendContext('El usuario está viendo la explicación de cómo hacer el ejercicio. No hables ni des feedback hasta que la explicación termine y se reanude el entrenamiento.');
-    speak(guide.spoken);
-  }, [speak]);
-
-  // Cierre de la guía: reanuda poses tras 1.5s de gracia y avisa a Live
-  const closeExerciseExample = useCallback((resumeMessage?: string) => {
-    setShowExample(false);
-    helpActiveRef.current = false;
-    resumeAtRef.current = Date.now() + 1500;
-    lastSpokenFeedbackRef.current = '';
-    window.speechSynthesis?.cancel();
-    liveClientRef.current?.sendContext('El usuario cerró la explicación del ejercicio. El entrenamiento se reanudó.');
-    if (resumeMessage) speak(resumeMessage);
-  }, [speak]);
+    // La guía es hablada: el panel se cierra solo al terminar el TTS
+    // (también sigue pudiendo cerrarse con la X o "Entendido").
+    speak(guide.spoken, () => closeExerciseExample());
+    // Fallback si el TTS no dispara onend (voz bloqueada o error de síntesis)
+    setTimeout(() => closeExerciseExample(), 35000);
+  }, [speak, closeExerciseExample]);
 
   // Persiste la serie pendiente del ejercicio actual (el contador backend resetea al cambiar de tipo)
   const flushPendingSet = useCallback(async () => {
@@ -650,10 +657,11 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
         </div>
       </div>
 
-      {/* Overlay de ejemplo del ejercicio */}
+      {/* Guía del ejercicio: tarjeta compacta arriba (la explicación es
+          hablada); no tapa la cámara y se cierra sola al terminar el TTS */}
       {showExample && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6">
-          <div className="bg-gray-900/95 border border-white/15 rounded-2xl shadow-2xl max-w-md w-full p-6 relative">
+        <div className="absolute inset-x-0 top-14 z-30 flex justify-center px-6 pointer-events-none">
+          <div className="bg-gray-900/95 border border-white/15 rounded-2xl shadow-2xl max-w-md w-full p-5 relative pointer-events-auto max-h-[65vh] overflow-y-auto">
             <button
               onClick={() => closeExerciseExample()}
               className="absolute top-3 right-3 text-gray-400 hover:text-white"
