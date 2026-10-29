@@ -77,7 +77,7 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
     expiresAt: number;
   } | null>(null);
   const proposalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [pendingProposalUI, setPendingProposalUI] = useState<string | null>(null);
+  const [, setPendingProposalUI] = useState<string | null>(null);
   const repsDisplayRef = useRef(0);
 
   // ---- Canal Gemini Live (voz natural); fallback: SpeechRecognition + regex ----
@@ -663,27 +663,6 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
           </span>
         </div>
       </div>
-
-      {/* Propuesta pendiente: confirmación por voz (sí/no) o táctil */}
-      {pendingProposalUI && (
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 bg-gray-900/95 border border-blue-500/40 rounded-2xl shadow-2xl p-5 w-full max-w-sm text-center space-y-4">
-          <p className="text-sm font-medium text-gray-100">{pendingProposalUI}</p>
-          <div className="flex space-x-3">
-            <button
-              onClick={() => { if (pendingProposalRef.current) applyProposal(pendingProposalRef.current); }}
-              className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-xl font-bold text-sm transition"
-            >
-              Sí
-            </button>
-            <button
-              onClick={cancelProposal}
-              className="flex-1 bg-red-600/90 hover:bg-red-700 text-white py-2.5 rounded-xl font-bold text-sm transition"
-            >
-              No
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Overlay inferior: orbe + feedback */}
       <div className="absolute bottom-[calc(2rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-30 flex flex-col items-center space-y-4 w-full max-w-md px-6">

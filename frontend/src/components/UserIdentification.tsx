@@ -82,8 +82,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const isListeningRef = useRef<any>(null);
 
   const [avatarState, setAvatarState] = useState<AvatarState>('idle');
-  const [message, setMessage] = useState<string>('Cargando sistema...');
-  const [showButtons, setShowButtons] = useState(false);
+  const [, setMessage] = useState<string>('Cargando sistema...');
+  const [, setShowButtons] = useState(false);
   const [faceStableCount, setFaceStableCount] = useState(0);
   // Resultado explícito del reconocimiento facial para el icono rostro
   const [faceIconResult, setFaceIconResult] = useState<'success' | 'error' | null>(null);
@@ -104,9 +104,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const updateShowButtons = (v: boolean) => { setShowButtons(v); showButtonsRef.current = v; };
   const updateCurrentUser = (u: User | null) => { currentUserRef.current = u; };
 
-  const [members, setMembers] = useState<User[]>([]);
-  const [selectedMember, setSelectedMember] = useState<User | null>(null);
-  const [mode, setMode] = useState<'detecting' | 'members'>('detecting');
+  const [, setMembers] = useState<User[]>([]);
+  const [, setSelectedMember] = useState<User | null>(null);
+  const [, setMode] = useState<'detecting' | 'members'>('detecting');
   const membersRef = useRef<User[]>([]);
   const selectedMemberRef = useRef<User | null>(null);
 
@@ -1112,10 +1112,6 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
           <InstructorAvatar state={avatarState} message="" />
         </div>
 
-        {/* Mensaje del asistente */}
-        <div className="bg-black/60 backdrop-blur-md border border-white/10 px-5 py-3 rounded-2xl shadow-xl w-full text-center">
-          <p className="text-sm font-medium text-gray-100">{message}</p>
-        </div>
       </div>
 
       {/* Zona de acciones: panel translúcido sobre el orbe. Aparece/desaparece
@@ -1138,64 +1134,28 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
           </button>
         )}
 
-        {mode === 'members' && (
-          <div className="bg-black/60 backdrop-blur-md border border-white/10 px-5 py-4 rounded-2xl shadow-xl w-full space-y-3">
-            <p className="text-sm font-medium text-gray-100 text-center">Integrantes detectados:</p>
-            <div className="flex flex-wrap gap-2 justify-center">
-              {members.map((m) => (
+        {/* Único panel visible: opciones de tipo de entrenamiento (verticales)
+            sobre recuadro translúcido. Todo lo demás del flujo es por voz. */}
+        {registrationStep === 'asking_session_goal' && (
+          <div className="bg-black/20 backdrop-blur-md border border-white/10 px-5 py-4 rounded-2xl shadow-xl w-full">
+            <div className="flex flex-col gap-2">
+              {TRAINING_GOALS.map((t) => (
                 <button
-                  key={m.id}
-                  onClick={() => selectMember(m)}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-bold transition ${
-                    selectedMember?.id === m.id ? 'bg-blue-600 text-white' : 'bg-white/10 text-gray-200 hover:bg-white/20'
-                  }`}
+                  key={t.goal}
+                  onClick={() => startSessionWithGoal(t.goal, `Perfecto. Preparando tu rutina de ${t.label}.`)}
+                  className="w-full px-3 py-2.5 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-blue-600 transition text-center"
                 >
-                  {m.name}
+                  {t.label}
                 </button>
               ))}
-            </div>
-            {registrationStep === 'asking_session_goal' ? (
-              // Chips de tipo de entrenamiento: el prompt por voz es corto y las
-              // opciones se leen acá; también se pueden decir en voz alta.
-              <div className="border-t border-white/10 pt-3 space-y-2">
-                <p className="text-xs text-gray-400 text-center">Decí el tipo de entrenamiento o tocá una opción</p>
-                <div className="flex flex-wrap gap-2 justify-center">
-                  {TRAINING_GOALS.map((t) => (
-                    <button
-                      key={t.goal}
-                      onClick={() => startSessionWithGoal(t.goal, `Perfecto. Preparando tu rutina de ${t.label}.`)}
-                      className="px-3 py-2 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-blue-600 transition"
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                  <button
-                    onClick={() => startSessionWithGoal(null, 'Perfecto. Armo tu rutina habitual.')}
-                    className="px-3 py-2 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-green-600 transition"
-                  >
-                    Lo de siempre
-                  </button>
-                </div>
-              </div>
-            ) : (
               <button
-                onClick={() => handleStartWorkoutForSelected()}
-                className="w-full bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+                onClick={() => startSessionWithGoal(null, 'Perfecto. Armo tu rutina habitual.')}
+                className="w-full px-3 py-2.5 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-green-600 transition text-center"
               >
-                Iniciar rutina
+                Lo de siempre
               </button>
-            )}
+            </div>
           </div>
-        )}
-
-        {/* Solo queda el CTA principal: el resto del flujo es por voz */}
-        {mode !== 'members' && showButtons && registrationStep === 'idle' && (
-          <button
-            onClick={() => { speak(`Perfecto. Iniciando tu rutina.`, () => handleStartWorkoutForSelected()); setTimeout(() => { if (!hasTransitionedRef.current) handleStartWorkoutForSelected(); }, 4000); }}
-            className="w-full bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
-          >
-            Sí, iniciar rutina
-          </button>
         )}
       </div>
 
