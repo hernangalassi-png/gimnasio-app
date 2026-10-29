@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { processPoseFrame, getEquipment, getRecommendedRoutines, startWorkoutSession, logWorkoutSet, endWorkoutSession, log, type Equipment, type Exercise } from '../services/api';
 import { LiveVoiceClient, type LiveToolCall } from '../services/liveVoice';
 import { applySpanishVoice } from '../services/tts';
-import { Camera, Volume2, HelpCircle, X, Mic } from 'lucide-react';
+import { Camera, Volume2, HelpCircle, Mic } from 'lucide-react';
 
 interface User {
   id: string;
@@ -48,7 +48,6 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
   const [feedback, setFeedback] = useState<string>('Asegúrate de estar visible');
   const [exercise, setExerciseState] = useState<string>('squat');
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [showExample, setShowExample] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [micBlocked, setMicBlocked] = useState(false);
   const [recommendations, setRecommendations] = useState<Exercise[]>([]);
@@ -114,7 +113,6 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
   // segundo intento de cierre, y el fallback por timeout puede llegar después.
   const closeExerciseExample = useCallback((resumeMessage?: string) => {
     if (!helpActiveRef.current) return;
-    setShowExample(false);
     helpActiveRef.current = false;
     resumeAtRef.current = Date.now() + 1500;
     lastSpokenFeedbackRef.current = '';
@@ -133,10 +131,9 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
     resumeAtRef.current = null;
     lastSpokenFeedbackRef.current = '';
     window.speechSynthesis?.cancel();
-    setShowExample(true);
-    liveClientRef.current?.sendContext('El usuario está viendo la explicación de cómo hacer el ejercicio. No hables ni des feedback hasta que la explicación termine y se reanude el entrenamiento.');
-    // La guía es hablada: el panel se cierra solo al terminar el TTS
-    // (también sigue pudiendo cerrarse con la X o "Entendido").
+    liveClientRef.current?.sendContext('El usuario pidió la explicación del ejercicio. No hables ni des feedback hasta que la explicación termine y se reanude el entrenamiento.');
+    // La guía es SOLO hablada (sin panel): al terminar el TTS se reanuda el
+    // feedback de poses. También se puede cortar diciendo cualquier comando.
     speak(guide.spoken, () => closeExerciseExample());
     // Fallback si el TTS no dispara onend (voz bloqueada o error de síntesis)
     setTimeout(() => closeExerciseExample(), 35000);
@@ -656,40 +653,6 @@ export const Workout: React.FC<{ user?: User | null; members?: User[]; stream?: 
           </span>
         </div>
       </div>
-
-      {/* Guía del ejercicio: tarjeta compacta arriba (la explicación es
-          hablada); no tapa la cámara y se cierra sola al terminar el TTS */}
-      {showExample && (
-        <div className="absolute inset-x-0 top-14 z-30 flex justify-center px-6 pointer-events-none">
-          <div className="bg-gray-900/95 border border-white/15 rounded-2xl shadow-2xl max-w-md w-full p-5 relative pointer-events-auto max-h-[65vh] overflow-y-auto">
-            <button
-              onClick={() => closeExerciseExample()}
-              className="absolute top-3 right-3 text-gray-400 hover:text-white"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <h3 className="text-lg font-bold text-white mb-4">
-              {(EXERCISE_GUIDES[exercise] || EXERCISE_GUIDES.squat).title}
-            </h3>
-            <ol className="space-y-3">
-              {(EXERCISE_GUIDES[exercise] || EXERCISE_GUIDES.squat).steps.map((step, i) => (
-                <li key={i} className="flex items-start space-x-3">
-                  <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">
-                    {i + 1}
-                  </span>
-                  <p className="text-sm text-gray-200">{step}</p>
-                </li>
-              ))}
-            </ol>
-            <button
-              onClick={() => closeExerciseExample('Perfecto. Comienza cuando estés listo.')}
-              className="mt-5 w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl font-bold text-sm transition"
-            >
-              Entendido, ¡vamos!
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Propuesta pendiente: confirmación por voz (sí/no) o táctil */}
       {pendingProposalUI && (

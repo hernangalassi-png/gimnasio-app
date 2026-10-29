@@ -1,4 +1,7 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from typing import Optional
 from uuid import UUID
@@ -9,6 +12,11 @@ from app.services.vision.pose_counter import pose_tracker_service
 from pydantic import BaseModel
 
 router = APIRouter()
+
+# process_frame es CPU-bound (MediaPipe) y stateful: correrlo en threadpool
+# para no congelar el event loop (bloqueaba upgrades WS como /live/ws), y
+# serializar con lock porque el tracker no es thread-safe.
+_pose_lock = asyncio.Lock()
 
 
 class PoseProcessRequest(BaseModel):
@@ -76,7 +84,10 @@ async def process_pose(
     t0 = time.perf_counter()
     try:
         image_bytes = await file.read()
-        result = pose_tracker_service.process_frame(image_bytes, exercise_type)
+        async with _pose_lock:
+            result = await run_in_threadpool(
+                pose_tracker_service.process_frame, image_bytes, exercise_type
+            )
         log("POSE", "Frame procesado", {"exercise": exercise_type, "bytes": len(image_bytes), "reps": result.get("reps"), "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1)})
         return result
     except Exception as e:

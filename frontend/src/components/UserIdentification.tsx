@@ -71,6 +71,7 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
   const meshDeadCountRef = useRef(0);
   const meshRecreateAttemptsRef = useRef(0);
   const meshGaveUpRef = useRef(false);
+  const meshRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isProcessingFrameRef = useRef(false);
   const hasTransitionedRef = useRef(false);
   const isInitializedRef = useRef(false);
@@ -429,7 +430,18 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     if (meshRecreateAttemptsRef.current > 2) {
       meshGaveUpRef.current = true;
       faceMeshRef.current = null; // el loop deja de enviarle frames
-      log('MESH', 'FaceMesh inválido persistente -> fallback geométrico permanente');
+      log('MESH', 'FaceMesh inválido persistente -> pausa 20s y reintento');
+      // No rendirse definitivamente: las ráfagas 100% NaN suelen ser un estado
+      // transitorio del wasm (throttle/pestaña). Reintentar cada 20s.
+      if (meshRetryTimerRef.current) clearTimeout(meshRetryTimerRef.current);
+      meshRetryTimerRef.current = setTimeout(() => {
+        if (!meshGaveUpRef.current || faceMeshRef.current) return;
+        meshGaveUpRef.current = false;
+        meshRecreateAttemptsRef.current = 0;
+        meshDeadCountRef.current = 0;
+        log('MESH', 'Reintentando FaceMesh tras pausa');
+        recreateFaceMesh();
+      }, 20000);
       return;
     }
     log('MESH', 'Landmarks 100% NaN sostenidos -> recreando instancia', { attempt: meshRecreateAttemptsRef.current });
@@ -623,10 +635,11 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         }
       }
     } else {
-      // La detección parpadea: tolerar hasta 2 misses seguidos (~200ms) antes
-      // de dar la cara por perdida, resetear el contador y soltar el snapshot.
+      // Umbral 15 (~1.5-3s sin cara): FaceDetection parpadea 1->0 frame a frame;
+      // con 3 misses el flicker reseteaba el contador estable y borraba el
+      // embedding FaceMesh acumulado (EMA), alargando la identificación.
       missesRef.current += 1;
-      if (missesRef.current >= 3) {
+      if (missesRef.current >= 15) {
         stableFramesRef.current = 0;
         setFaceStableCount(0);
         lastEmbeddingRef.current = null;
@@ -829,37 +842,16 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
     speak('Colócate frente a la cámara para agregar otro integrante.', () => {});
   };
 
-  const handleResetAll = () => {
-    log('FLOW', 'Reset completo de identificación');
-    stopListening();
-    updateCurrentUser(null);
-    updateShowButtons(false);
-    updateRegistrationStep('idle');
-    isDetectingRef.current = false;
-    stableFramesRef.current = 0;
-    missesRef.current = 0;
-    setFaceStableCount(0);
-    setFaceIconResult(null);
-    pendingNameRef.current = '';
-    lastEmbeddingRef.current = null;
-    meshEmbeddingRef.current = null;
-    meshGoodRef.current = 0;
-    meshWaitStartRef.current = 0;
-    setMembers([]);
-    setSelectedMember(null);
-    membersRef.current = [];
-    selectedMemberRef.current = null;
-    setMode('detecting');
-    setMessage('Colócate frente a la cámara');
-    speak('Esperando identificación.', () => {});
-  };
-
   useEffect(() => {
     return () => {
       stopListening();
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
+      }
+      if (meshRetryTimerRef.current) {
+        clearTimeout(meshRetryTimerRef.current);
+        meshRetryTimerRef.current = null;
       }
       if (faceDetectionRef.current) {
         try {
@@ -1106,7 +1098,8 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         </div>
       </div>
 
-      {/* Overlay inferior: orbe + mensaje + acciones */}
+      {/* Overlay inferior FIJO: orbe + mensaje. Nada más se renderiza en este
+          contenedor, así que el orbe nunca se desplaza al aparecer paneles. */}
       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center space-y-4 w-full max-w-md px-6">
         {/* Orbe del asistente */}
         <div className={`w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 ${
@@ -1123,7 +1116,11 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
         <div className="bg-black/60 backdrop-blur-md border border-white/10 px-5 py-3 rounded-2xl shadow-xl w-full text-center">
           <p className="text-sm font-medium text-gray-100">{message}</p>
         </div>
+      </div>
 
+      {/* Zona de acciones: panel translúcido sobre el orbe. Aparece/desaparece
+          sin mover nada (posición absoluta independiente). */}
+      <div className="absolute bottom-44 left-1/2 -translate-x-1/2 z-20 w-full max-w-md px-6 flex flex-col items-center space-y-3">
         {/* Aviso de voz bloqueada por autoplay */}
         {voiceBlocked && (
           <button
@@ -1141,10 +1138,9 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
           </button>
         )}
 
-        {/* Acciones */}
-        {mode === 'members' ? (
-          <div className="bg-black/70 backdrop-blur-md border border-white/10 px-5 py-4 rounded-2xl shadow-xl w-full space-y-4">
-            <p className="text-sm font-medium text-gray-100">Integrantes detectados:</p>
+        {mode === 'members' && (
+          <div className="bg-black/60 backdrop-blur-md border border-white/10 px-5 py-4 rounded-2xl shadow-xl w-full space-y-3">
+            <p className="text-sm font-medium text-gray-100 text-center">Integrantes detectados:</p>
             <div className="flex flex-wrap gap-2 justify-center">
               {members.map((m) => (
                 <button
@@ -1161,83 +1157,45 @@ export const UserIdentification: React.FC<{ onUserIdentified: (user: User, membe
             {registrationStep === 'asking_session_goal' ? (
               // Chips de tipo de entrenamiento: el prompt por voz es corto y las
               // opciones se leen acá; también se pueden decir en voz alta.
-              <div className="flex flex-wrap gap-2 justify-center">
-                {TRAINING_GOALS.map((t) => (
+              <div className="border-t border-white/10 pt-3 space-y-2">
+                <p className="text-xs text-gray-400 text-center">Decí el tipo de entrenamiento o tocá una opción</p>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {TRAINING_GOALS.map((t) => (
+                    <button
+                      key={t.goal}
+                      onClick={() => startSessionWithGoal(t.goal, `Perfecto. Preparando tu rutina de ${t.label}.`)}
+                      className="px-3 py-2 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-blue-600 transition"
+                    >
+                      {t.label}
+                    </button>
+                  ))}
                   <button
-                    key={t.goal}
-                    onClick={() => startSessionWithGoal(t.goal, `Perfecto. Preparando tu rutina de ${t.label}.`)}
-                    className="px-3 py-2 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-blue-600 transition"
+                    onClick={() => startSessionWithGoal(null, 'Perfecto. Armo tu rutina habitual.')}
+                    className="px-3 py-2 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-green-600 transition"
                   >
-                    {t.label}
+                    Lo de siempre
                   </button>
-                ))}
-                <button
-                  onClick={() => startSessionWithGoal(null, 'Perfecto. Armo tu rutina habitual.')}
-                  className="px-3 py-2 rounded-lg text-sm font-bold bg-white/10 text-gray-100 hover:bg-green-600 transition"
-                >
-                  Lo de siempre
-                </button>
+                </div>
               </div>
             ) : (
-              <div className="flex space-x-3">
-                <button
-                  onClick={() => handleStartWorkoutForSelected()}
-                  className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
-                >
-                  Iniciar rutina
-                </button>
-                <button
-                  onClick={handleAddAnother}
-                  className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
-                >
-                  Agregar otro
-                </button>
-                <button
-                  onClick={handleResetAll}
-                  className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
-                >
-                  Reiniciar
-                </button>
-              </div>
-            )}
-          </div>
-        ) : (
-          <>
-            {faceStableCount === 0 && registrationStep === 'idle' && !showButtons && (
               <button
-                onClick={() => {
-                  speak('No te alcanzo a ver bien, acércate un poco a la cámara');
-                  setMessage('No te alcanzo a ver bien, acércate un poco a la cámara');
-                }}
-                className="bg-white/10 hover:bg-white/20 text-gray-200 px-6 py-2.5 rounded-xl font-bold text-sm transition"
+                onClick={() => handleStartWorkoutForSelected()}
+                className="w-full bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
               >
-                No me veo bien
+                Iniciar rutina
               </button>
             )}
+          </div>
+        )}
 
-            {showButtons && registrationStep === 'idle' && (
-              <div className="flex space-x-3 w-full">
-                <button
-                  onClick={() => { speak(`Perfecto. Iniciando tu rutina.`, () => handleStartWorkoutForSelected()); setTimeout(() => { if (!hasTransitionedRef.current) handleStartWorkoutForSelected(); }, 4000); }}
-                  className="flex-1 bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
-                >
-                  Sí, iniciar rutina
-                </button>
-                <button
-                  onClick={handleAddAnother}
-                  className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
-                >
-                  Agregar otro
-                </button>
-                <button
-                  onClick={handleResetAll}
-                  className="flex-1 bg-white/10 hover:bg-white/20 text-gray-200 py-3 rounded-xl font-bold text-sm transition"
-                >
-                  Reiniciar
-                </button>
-              </div>
-            )}
-          </>
+        {/* Solo queda el CTA principal: el resto del flujo es por voz */}
+        {mode !== 'members' && showButtons && registrationStep === 'idle' && (
+          <button
+            onClick={() => { speak(`Perfecto. Iniciando tu rutina.`, () => handleStartWorkoutForSelected()); setTimeout(() => { if (!hasTransitionedRef.current) handleStartWorkoutForSelected(); }, 4000); }}
+            className="w-full bg-green-600/90 hover:bg-green-700 text-white py-3 rounded-xl font-bold text-sm shadow-lg transition"
+          >
+            Sí, iniciar rutina
+          </button>
         )}
       </div>
 

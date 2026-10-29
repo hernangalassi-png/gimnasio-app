@@ -65,7 +65,9 @@ export class LiveVoiceClient {
     const ready = await new Promise<boolean>((resolve) => {
       const ws = new WebSocket(wsUrl);
       this.ws = ws;
-      const timeout = setTimeout(() => { try { ws.close(); } catch {} resolve(false); }, 15000);
+      // 25s: el backend hace accept() + connect a Gemini Live antes de mandar
+      // 'ready'; en cold start de Render eso puede superar los 15s originales.
+      const timeout = setTimeout(() => { try { ws.close(); } catch {} resolve(false); }, 25000);
 
       ws.onopen = () => log('LIVE', 'WS abierto, esperando ready');
       ws.onmessage = (ev) => {
